@@ -10,7 +10,7 @@ void main() async {
 
   // Configuración de estilo de la barra de estado y navegación
   SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
+    const SystemUiOverlayStyle( 
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
       systemNavigationBarColor: Color(0xFF0D1117),

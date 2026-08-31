@@ -67,7 +67,8 @@ class PantallaReproductor extends StatefulWidget {
           return FadeTransition(opacity: animation, child: child);
         },
         transitionDuration: const Duration(milliseconds: 180),
-        reverseTransitionDuration: const Duration(milliseconds: 180),
+        // Al regresar no se mezcla la pantalla horizontal con la principal.
+        reverseTransitionDuration: Duration.zero,
       ),
     );
   }
@@ -118,6 +119,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   int _ultimoGuardadoTimestamp = 0;
   int _ultimaPosicionMs = 0;
   bool _progresoFinalizadoLimpiado = false;
+  bool _reanudacionAplicada = false;
 
   // Gestión de volumen
   final VolumeController _controladorVolumen = VolumeController();
@@ -196,6 +198,14 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       _velocidadActual = await ServicioPreferencias.obtenerVelocidadPreferida();
       await _reproductor.setRate(_velocidadActual);
 
+      // Leer el progreso antes de abrir el medio. Así los eventos iniciales en
+      // posición cero no pueden reemplazar el punto que se debe restaurar.
+      final posicionGuardada = widget.video.posicionGuardadaMs > 5000
+          ? widget.video.posicionGuardadaMs
+          : await ServicioPreferencias.obtenerPosicionGuardada(
+              widget.video.ruta,
+            );
+
       // 1. Escuchar posición
       _suscripciones.add(
         _reproductor.stream.position.listen((pos) {
@@ -204,10 +214,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
           final durMs = _reproductor.state.duration.inMilliseconds;
 
           final videoCompletado = _esVideoCompletado(posMs, durMs);
-          widget.video.posicionGuardadaMs = videoCompletado ? 0 : posMs;
-          widget.video.duracionTotalMs = durMs;
-          if (!videoCompletado) {
-            _progresoFinalizadoLimpiado = false;
+          if (_reanudacionAplicada) {
+            widget.video.posicionGuardadaMs = videoCompletado ? 0 : posMs;
+            widget.video.duracionTotalMs = durMs;
+            if (!videoCompletado) {
+              _progresoFinalizadoLimpiado = false;
+            }
           }
 
           if (_mostrarControles) {
@@ -224,7 +236,8 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
           // Throttling de disco cada 5s
           final ahora = DateTime.now().millisecondsSinceEpoch;
-          if (ahora - _ultimoGuardadoTimestamp >= 5000 &&
+          if (_reanudacionAplicada &&
+              ahora - _ultimoGuardadoTimestamp >= 5000 &&
               _reproductor.state.playing) {
             _ultimoGuardadoTimestamp = ahora;
             if (videoCompletado) {
@@ -299,19 +312,15 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         }),
       );
 
-      // Abrir el medio
+      // Abrir pausado, esperar sus metadatos y restaurar antes de reproducir.
       await _reproductor.open(Media(widget.video.ruta), play: false);
+      final objetivoReanudacionMs = await _aplicarReanudacionInicial(
+        posicionGuardada,
+      );
 
-      final posicionGuardada = widget.video.posicionGuardadaMs > 0
-          ? widget.video.posicionGuardadaMs
-          : await ServicioPreferencias.obtenerPosicionGuardada(
-              widget.video.ruta,
-            );
-
-      if (posicionGuardada > 5000) {
-        await _reproductor.seek(Duration(milliseconds: posicionGuardada));
-      }
-
+      // Evita que el primer evento del motor escriba 0 sobre el progreso.
+      _ultimoGuardadoTimestamp = DateTime.now().millisecondsSinceEpoch;
+      _reanudacionAplicada = objetivoReanudacionMs == 0;
       await _reproductor.play();
 
       if (!mounted) return;
@@ -326,6 +335,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         _estaInicializado = true;
       });
 
+      if (objetivoReanudacionMs > 0) {
+        unawaited(_verificarReanudacion(objetivoReanudacionMs));
+      }
       _reiniciarTemporizadorOcultarControles();
     } catch (e) {
       if (!mounted) return;
@@ -334,6 +346,47 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         _mensajeError = 'Error al decodificar el video: $e';
       });
     }
+  }
+
+  Future<int> _aplicarReanudacionInicial(int posicionGuardadaMs) async {
+    if (posicionGuardadaMs <= 5000) return 0;
+
+    var duracion = _reproductor.state.duration;
+    if (duracion <= Duration.zero) {
+      duracion = await _reproductor.stream.duration
+          .firstWhere((valor) => valor > Duration.zero)
+          .timeout(
+            const Duration(milliseconds: 900),
+            onTimeout: () => Duration.zero,
+          );
+    }
+
+    var objetivoMs = posicionGuardadaMs;
+    final duracionMs = duracion.inMilliseconds;
+    if (duracionMs > 1000 && objetivoMs >= duracionMs) {
+      objetivoMs = duracionMs - 1000;
+    }
+
+    await _reproductor.seek(Duration(milliseconds: objetivoMs));
+    return objetivoMs;
+  }
+
+  /// Algunos decodificadores aceptan el primer seek antes de preparar el
+  /// video pero no lo aplican. Se verifica una vez iniciada la reproducción.
+  Future<void> _verificarReanudacion(int objetivoMs) async {
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted || _estaSaliendo || !_reproductorCreado) return;
+
+    final posicionActualMs = _reproductor.state.position.inMilliseconds;
+    if (posicionActualMs + 2000 < objetivoMs) {
+      await _reproductor.seek(Duration(milliseconds: objetivoMs));
+    }
+
+    if (!mounted || _estaSaliendo) return;
+    _reanudacionAplicada = true;
+    widget.video.posicionGuardadaMs = objetivoMs;
+    _ultimoGuardadoTimestamp = DateTime.now().millisecondsSinceEpoch;
+    _sincronizarEstadoInterfaz();
   }
 
   @override
@@ -352,7 +405,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   }
 
   Future<void> _guardarProgresoInmediato() async {
-    if (!_estaInicializado) return;
+    if (!_estaInicializado || !_reanudacionAplicada) return;
 
     final posMs = _reproductor.state.position.inMilliseconds;
     final durMs = _reproductor.state.duration.inMilliseconds;
@@ -370,30 +423,50 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     );
   }
 
-  /// Manejo limpio, instantáneo y sin distorsión al salir del reproductor.
+  /// Sale sin exponer la interfaz horizontal durante la rotación a vertical.
   Future<void> _manejarSalida() async {
     if (_estaSaliendo) return;
-    _estaSaliendo = true;
 
-    // 1. Pausar y guardar inmediatamente
+    // Cubrir primero la superficie nativa del video. Esperar un frame garantiza
+    // que Android rote una pantalla negra y no comprima visualmente la UI.
+    setState(() {
+      _estaSaliendo = true;
+    });
+    await WidgetsBinding.instance.endOfFrame;
+
     if (_estaInicializado) {
-      try {
-        await _reproductor.pause();
-      } catch (_) {}
-      await _guardarProgresoInmediato();
+      // El progreso captura posición y duración antes de su primer await, por lo
+      // que puede persistirse sin bloquear el regreso a la biblioteca.
+      unawaited(_guardarProgresoInmediato());
+      unawaited(_reproductor.pause());
     }
 
-    // 2. Restaurar barras y orientación vertical de forma limpia
     try {
-      ScreenBrightness.instance.resetApplicationScreenBrightness();
+      unawaited(ScreenBrightness.instance.resetApplicationScreenBrightness());
     } catch (_) {}
-    WakelockPlus.disable();
-    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    unawaited(WakelockPlus.disable());
 
-    // 3. Regresar limpiamente
+    await Future.wait([
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge),
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+    ]);
+
+    // La llamada anterior confirma la solicitud, no necesariamente que Android
+    // haya terminado la animación física. Esperar unos frames evita el estirado.
+    await _esperarVistaVertical();
+
     if (mounted) {
       Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _esperarVistaVertical() async {
+    const maximoFrames = 24;
+    for (var frame = 0; frame < maximoFrames; frame++) {
+      if (!mounted) return;
+      final tamanoFisico = View.of(context).physicalSize;
+      if (tamanoFisico.height >= tamanoFisico.width) return;
+      await Future<void>.delayed(const Duration(milliseconds: 16));
     }
   }
 
