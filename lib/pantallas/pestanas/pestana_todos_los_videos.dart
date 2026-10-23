@@ -337,6 +337,7 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(horizontal: 14),
             scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
             itemCount: FiltroCategoria.values.length,
             separatorBuilder: (_, index) => const SizedBox(width: 8),
             itemBuilder: (context, i) {
@@ -482,6 +483,9 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                               key: const PageStorageKey('grid_videos'),
                               padding: const EdgeInsets.fromLTRB(14, 6, 14, 80),
                               cacheExtent: 600,
+                              physics: const BouncingScrollPhysics(
+                                parent: AlwaysScrollableScrollPhysics(),
+                              ),
                               gridDelegate:
                                   SliverGridDelegateWithFixedCrossAxisCount(
                                     crossAxisCount: columnas,
@@ -523,6 +527,9 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                           key: const PageStorageKey('lista_videos'),
                           padding: const EdgeInsets.only(top: 4, bottom: 80),
                           cacheExtent: 600,
+                          physics: const BouncingScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          ),
                           itemCount: videosFiltrados.length,
                           itemBuilder: (context, index) {
                             final video = videosFiltrados[index];

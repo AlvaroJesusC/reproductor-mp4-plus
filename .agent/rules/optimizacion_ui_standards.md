@@ -6,9 +6,12 @@ description: Reglas de optimización, rendimiento de video y mejora de UI/Layout
 # Reglas Activas para reproductormp4
 
 1. **Consulta de Skills:**
-   Revisar y ejecutar las directrices de las skills en `.agent/skills/` correspondientes a la tarea (especialmente `cinematic-ui-facelift`, `flutter-performance`, `adaptive-layout`, `widget-composition`, `custom-canvas-and-gestures` y `motion-and-haptics`).
+   Revisar y ejecutar las directrices de las skills en `.agent/skills/` correspondientes a la tarea (especialmente `extreme-multimedia-performance`, `cinematic-ui-facelift`, `flutter-performance`, `adaptive-layout`, `widget-composition`, `custom-canvas-and-gestures` y `motion-and-haptics`).
 
-2. **Rendimiento y Cero Jank en Video:**
+2. **Rendimiento Extremo a 144Hz y Cero Jank en Video (`extreme-multimedia-performance`):**
+   - Forzar el modo de alta tasa de refresco a 144Hz con `flutter_displaymode`.
+   - Fast-Seeking por keyframes en arrastre de scrubber para evitar congelamiento de CPU.
+   - Pre-warmed Player Pool para arranque de video instantáneo (<50ms).
    - Constructores `const` en todo subárbol estático.
    - Aislar el scrubber de tiempo y barra de progreso; nunca hacer `setState()` global durante la reproducción.
    - Usar `RepaintBoundary` entre la textura del video y el HUD de controles, y en cada elemento de lista o grid.

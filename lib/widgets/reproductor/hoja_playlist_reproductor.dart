@@ -196,6 +196,9 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
                     ),
                   )
                 : ListView.builder(
+                    physics: const BouncingScrollPhysics(
+                      parent: AlwaysScrollableScrollPhysics(),
+                    ),
                     itemCount: listaFiltrada.length,
                     itemBuilder: (context, index) {
                       final video = listaFiltrada[index];

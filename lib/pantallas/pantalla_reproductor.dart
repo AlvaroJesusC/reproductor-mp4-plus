@@ -151,6 +151,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   int _diferenciaSeekSegundos = 0;
   Timer? _temporizadorOcultarOSD;
 
+  // Fast-Seeking por Keyframes para scrubber y gestos a 144Hz sin micro-congelamientos
+  bool _arrastrandoScrubber = false;
+  DateTime _ultimoFastSeekTimestamp = DateTime.fromMillisecondsSinceEpoch(0);
+
   // Optimización de I/O en disco (Throttling)
   int _ultimoGuardadoTimestamp = 0;
   int _ultimaPosicionMs = 0;
@@ -229,7 +233,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       try {
         final dynamic platform = _reproductor.platform;
         if (platform != null) {
-          await platform.setProperty('hwdec', 'auto-safe');
+          // Aceleración directa por hardware en GPU (mediacodec en Android)
+          if (Platform.isAndroid) {
+            await platform.setProperty('hwdec', 'mediacodec');
+          } else {
+            await platform.setProperty('hwdec', 'auto-safe');
+          }
           await platform.setProperty('hwdec-codecs', 'all');
           await platform.setProperty('sub-auto', 'all');
           await platform.setProperty('audio-file-auto', 'fuzzy');
@@ -303,7 +312,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       // 1. Escuchar posición
       _suscripciones.add(
         _reproductor.stream.position.listen((pos) {
-          if (!mounted || _estaSaliendo) return;
+          if (!mounted || _estaSaliendo || _arrastrandoScrubber) return;
           final posMs = pos.inMilliseconds;
           final durMs = _reproductor.state.duration.inMilliseconds;
 
@@ -661,17 +670,38 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _reiniciarTemporizadorOcultarControles();
   }
 
-  /// Cambia la posición mediante la barra de deslizamiento.
-  Future<void> _cambiarProgreso(double ratio) async {
+  /// Ejecuta una búsqueda rápida no bloqueante por fotogramas clave (Keyframes)
+  /// con limitador de frecuencia para no saturar el canal C++ / libmpv durante el arrastre a 144Hz.
+  void _ejecutarFastSeek(Duration posicion) {
     if (!_estaInicializado || _estaSaliendo) return;
+    final ahora = DateTime.now();
+    if (ahora.difference(_ultimoFastSeekTimestamp).inMilliseconds >= 60) {
+      _ultimoFastSeekTimestamp = ahora;
+      // Seek asíncrono no bloqueante: libmpv busca al keyframe más cercano de inmediato
+      unawaited(_reproductor.seek(posicion));
+    }
+  }
+
+  void _iniciarCambioProgreso(double ratio) {
+    if (!_estaInicializado || _estaSaliendo) return;
+    _arrastrandoScrubber = true;
+    _temporizadorOcultarControles?.cancel();
+  }
+
+  /// Cambia la posición mediante la barra de deslizamiento con Fast-Seeking por Keyframes.
+  void _cambiarProgreso(double ratio) {
+    if (!_estaInicializado || _estaSaliendo) return;
+    _arrastrandoScrubber = true;
     final duracionMs = _reproductor.state.duration.inMilliseconds;
     final objetivoMs = (ratio * duracionMs).round();
     _posicionSeekArrastreMs = objetivoMs;
     _actualizarProgreso(posicionMs: objetivoMs);
+    _ejecutarFastSeek(Duration(milliseconds: objetivoMs));
   }
 
   Future<void> _finalizarCambioProgreso(double ratio) async {
     if (!_estaInicializado || _estaSaliendo) return;
+    _arrastrandoScrubber = false;
     final duracionMs = _reproductor.state.duration.inMilliseconds;
     final objetivoMs = (ratio * duracionMs).round();
     await _reproductor.seek(Duration(milliseconds: objetivoMs));
@@ -1448,6 +1478,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   void _alIniciarArrastreHorizontal(DragStartDetails details) {
     if (_pantallaBloqueada || !_estaInicializado || _estaSaliendo) return;
     _temporizadorOcultarOSD?.cancel();
+    _arrastrandoScrubber = true;
     _posicionInicialTouchX = details.localPosition.dx;
     _posicionInicialSeekMs = _reproductor.state.position.inMilliseconds;
     _diferenciaSeekSegundos = 0;
@@ -1472,10 +1503,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
     _tipoGestoActual = TipoGestoOSD.posicionTiempo;
     _notificarCambioOSD();
+    _ejecutarFastSeek(Duration(milliseconds: _posicionSeekArrastreMs));
   }
 
   Future<void> _alFinalizarArrastreHorizontal(DragEndDetails details) async {
     if (_pantallaBloqueada || !_estaInicializado || _estaSaliendo) return;
+    _arrastrandoScrubber = false;
     await _reproductor.seek(Duration(milliseconds: _posicionSeekArrastreMs));
     _programarOcultarOSD();
     _reiniciarTemporizadorOcultarControles();
@@ -1727,6 +1760,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                         bucleABActivo:
                             _buclePuntoA != null || _buclePuntoB != null,
                         alAlternarPlayPause: _alternarPlayPause,
+                        alIniciarCambioProgreso: _iniciarCambioProgreso,
                         alCambiarProgreso: _cambiarProgreso,
                         alFinalizarCambioProgreso: _finalizarCambioProgreso,
                         alRegresar: _manejarSalida,

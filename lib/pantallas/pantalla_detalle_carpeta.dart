@@ -39,6 +39,9 @@ class _PantallaDetalleCarpetaState extends State<PantallaDetalleCarpeta> {
         ),
       ),
       body: ListView.builder(
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
         padding: const EdgeInsets.symmetric(vertical: 8),
         cacheExtent: 500,
         itemCount: videos.length,

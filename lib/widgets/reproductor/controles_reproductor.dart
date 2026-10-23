@@ -21,6 +21,7 @@ class ControlesReproductor extends StatelessWidget {
 
   // Callbacks de interacción
   final VoidCallback alAlternarPlayPause;
+  final ValueChanged<double>? alIniciarCambioProgreso;
   final ValueChanged<double> alCambiarProgreso;
   final ValueChanged<double> alFinalizarCambioProgreso;
   final VoidCallback alRegresar;
@@ -59,6 +60,7 @@ class ControlesReproductor extends StatelessWidget {
     this.cantidadVideosPlaylist = 1,
     this.bucleABActivo = false,
     required this.alAlternarPlayPause,
+    this.alIniciarCambioProgreso,
     required this.alCambiarProgreso,
     required this.alFinalizarCambioProgreso,
     required this.alRegresar,
@@ -298,6 +300,7 @@ class ControlesReproductor extends StatelessWidget {
           // FILA 1: TIEMPOS Y BARRA DE PROGRESO (Aislado reactivamente)
           _BarraProgresoAislada(
             estadoProgreso: estadoProgreso,
+            alIniciarCambioProgreso: alIniciarCambioProgreso,
             alCambiarProgreso: alCambiarProgreso,
             alFinalizarCambioProgreso: alFinalizarCambioProgreso,
           ),
@@ -431,11 +434,13 @@ class ControlesReproductor extends StatelessWidget {
 /// redibuja únicamente este componente, dejando estáticos todos los botones y degradados.
 class _BarraProgresoAislada extends StatelessWidget {
   final ValueNotifier<EstadoProgresoReproductor> estadoProgreso;
+  final ValueChanged<double>? alIniciarCambioProgreso;
   final ValueChanged<double> alCambiarProgreso;
   final ValueChanged<double> alFinalizarCambioProgreso;
 
   const _BarraProgresoAislada({
     required this.estadoProgreso,
+    this.alIniciarCambioProgreso,
     required this.alCambiarProgreso,
     required this.alFinalizarCambioProgreso,
   });
@@ -512,6 +517,7 @@ class _BarraProgresoAislada extends StatelessWidget {
                         value: valorProgreso,
                         min: 0.0,
                         max: 1.0,
+                        onChangeStart: alIniciarCambioProgreso,
                         onChanged: alCambiarProgreso,
                         onChangeEnd: alFinalizarCambioProgreso,
                       ),

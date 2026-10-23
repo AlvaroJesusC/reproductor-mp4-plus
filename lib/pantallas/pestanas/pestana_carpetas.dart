@@ -485,7 +485,9 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
         }
       },
       child: CustomScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
         slivers: [
           // 1. LISTA DE SUBCARPETAS (Colecciones multimedia)
           if (subcarpetas.isNotEmpty)
@@ -560,6 +562,9 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
       backgroundColor: ColoresApp.fondoSecundario,
       onRefresh: widget.alRefrescar,
       child: ListView.builder(
+        physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
         padding: const EdgeInsets.only(top: 8, bottom: 80),
         itemCount: widget.carpetasGlobales.length,
         itemBuilder: (context, index) {

@@ -74,6 +74,9 @@ class PestanaRecientes extends StatelessWidget {
         : <ModeloVideo>[];
 
     return ListView(
+      physics: const BouncingScrollPhysics(
+        parent: AlwaysScrollableScrollPhysics(),
+      ),
       padding: const EdgeInsets.only(top: 12, bottom: 80),
       children: [
         // 1. HERO SHOWCASE CINEMÁTICO DEL ÚLTIMO VIDEO
