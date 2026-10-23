@@ -10,6 +10,7 @@
 
 | Tarea / Dominio | Skill(s) Obligatoria(s) en `.agent/skills/` |
 | :--- | :--- |
+| **Lavado de Cara, Rediseño Cinemático y Anti-AI-Slop** | `cinematic-ui-facelift` |
 | **Rendimiento, 60/120 FPS, Scrubber/Timeline sin Jank, Isolates** | `flutter-performance` |
 | **Layout Adaptativo (Pantalla Completa, Rotación, Notches, Safe Areas)** | `adaptive-layout` |
 | **Composición de Widgets (HUD de controles vs Lienzo de Video)** | `widget-composition` |

@@ -193,6 +193,7 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
+            side: const BorderSide(color: ColoresApp.bordeSutil, width: 1),
           ),
           backgroundColor: ColoresApp.fondoTarjeta,
         ),
@@ -295,10 +296,24 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
           title: Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(6),
+                padding: const EdgeInsets.all(7),
                 decoration: BoxDecoration(
-                  color: ColoresApp.acentoPrimario,
-                  borderRadius: BorderRadius.circular(8),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      ColoresApp.acentoPrimario,
+                      Color(0xFFD61E47),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: ColoresApp.acentoPrimario.withValues(alpha: 0.35),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
                 child: const Icon(
                   Icons.play_arrow_rounded,
@@ -306,10 +321,15 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
                   size: 20,
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               const Text(
                 'Reproductor MP4',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19),
+                style: TextStyle(
+                  color: ColoresApp.textoPrincipal,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 19,
+                  letterSpacing: 0.2,
+                ),
               ),
             ],
           ),
@@ -363,14 +383,27 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
                   ),
                 ],
               ),
-        floatingActionButton: FloatingActionButton.extended(
-          backgroundColor: ColoresApp.acentoPrimario,
-          icon: const Icon(Icons.file_open_rounded, color: Colors.white),
-          label: const Text(
-            'Abrir Archivo',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        floatingActionButton: Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: ColoresApp.acentoPrimario.withValues(alpha: 0.35),
+                blurRadius: 14,
+                spreadRadius: 1,
+                offset: const Offset(0, 3),
+              ),
+            ],
           ),
-          onPressed: _abrirSelectorManual,
+          child: FloatingActionButton(
+            elevation: 0,
+            backgroundColor: ColoresApp.acentoPrimario,
+            foregroundColor: Colors.white,
+            shape: const CircleBorder(),
+            tooltip: 'Abrir archivo de video',
+            onPressed: _abrirSelectorManual,
+            child: const Icon(Icons.folder_open_rounded, size: 24),
+          ),
         ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: _indicePestana,
@@ -384,11 +417,13 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
               icon: Badge(
                 isLabelVisible: _videosRecientes.isNotEmpty,
                 label: Text('${_videosRecientes.length}'),
+                backgroundColor: ColoresApp.acentoPrimario,
                 child: const Icon(Icons.history_rounded),
               ),
               selectedIcon: Badge(
                 isLabelVisible: _videosRecientes.isNotEmpty,
                 label: Text('${_videosRecientes.length}'),
+                backgroundColor: ColoresApp.acentoPrimario,
                 child: const Icon(
                   Icons.history_rounded,
                   color: ColoresApp.acentoPrimario,

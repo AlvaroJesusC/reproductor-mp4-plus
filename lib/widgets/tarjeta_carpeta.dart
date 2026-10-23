@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import '../constantes/colores_app.dart';
 import '../modelos/modelo_carpeta_video.dart';
 
-/// Elemento de lista minimalista de carpeta estilo explorador de archivos.
+/// Elemento de lista estilizado para carpetas con estética de colecciones multimedia.
 class TarjetaCarpeta extends StatelessWidget {
   final ModeloCarpetaVideo carpeta;
   final VoidCallback alPresionar;
@@ -16,55 +16,86 @@ class TarjetaCarpeta extends StatelessWidget {
     this.alReproducirTodo,
   });
 
+  String _construirTextoResumen() {
+    if (carpeta.cantidadSubcarpetas > 0 && carpeta.totalVideosMostrar > 0) {
+      final subStr = carpeta.cantidadSubcarpetas == 1
+          ? '1 carpeta'
+          : '${carpeta.cantidadSubcarpetas} carpetas';
+      final vidStr = carpeta.totalVideosMostrar == 1
+          ? '1 video'
+          : '${carpeta.totalVideosMostrar} videos';
+      return '$subStr  •  $vidStr';
+    } else if (carpeta.cantidadSubcarpetas > 0) {
+      return carpeta.cantidadSubcarpetas == 1
+          ? '1 subcarpeta'
+          : '${carpeta.cantidadSubcarpetas} subcarpetas';
+    } else if (carpeta.totalVideosMostrar > 0) {
+      return carpeta.totalVideosMostrar == 1
+          ? '1 video'
+          : '${carpeta.totalVideosMostrar} videos';
+    }
+    return 'Sin contenido multimedia';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final resumen = _construirTextoResumen();
+
     return InkWell(
       onTap: alPresionar,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         child: Row(
           children: [
-            // Icono de carpeta outline estilo explorador (como en la captura)
+            // Icono de carpeta de colección multimedia con gradiente sutil y micro-borde
             Container(
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: const Color(0xFF1E232B),
-                borderRadius: BorderRadius.circular(8),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    ColoresApp.acentoAzul.withValues(alpha: 0.18),
+                    ColoresApp.fondoTarjeta,
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.15),
-                  width: 1.2,
+                  color: ColoresApp.acentoAzul.withValues(alpha: 0.35),
+                  width: 1,
                 ),
               ),
               child: const Icon(
-                Icons.folder_outlined,
-                color: Color(0xFFD0D7DE),
-                size: 26,
+                Icons.folder_rounded,
+                color: Color(0xFF60A5FA),
+                size: 24,
               ),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 14),
 
-            // Nombre y contador de elementos
+            // Nombre y contador de elementos limpio (sin emojis)
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
                     carpeta.nombre,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 0.2,
+                      color: ColoresApp.textoPrincipal,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.15,
                     ),
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    carpeta.resumenElementos,
-                    style: TextStyle(
-                      color: ColoresApp.textoSecundario.withValues(alpha: 0.8),
+                    resumen,
+                    style: const TextStyle(
+                      color: ColoresApp.textoSecundario,
                       fontSize: 12,
                       fontWeight: FontWeight.w400,
                     ),
@@ -73,16 +104,41 @@ class TarjetaCarpeta extends StatelessWidget {
               ),
             ),
 
-            // Menú contextual de 3 puntos (⋮)
+            // Badge pastilla para el conteo de videos si hay
+            if (carpeta.totalVideosMostrar > 0) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 7,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: ColoresApp.fondoTarjeta,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: ColoresApp.bordeSutil, width: 1),
+                ),
+                child: Text(
+                  '${carpeta.totalVideosMostrar}',
+                  style: const TextStyle(
+                    color: ColoresApp.textoSecundario,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
+
+            // Menú contextual refinado (⋮)
             PopupMenuButton<String>(
               icon: const Icon(
                 Icons.more_vert_rounded,
-                color: Color(0xFF8B949E),
+                color: ColoresApp.textoSecundario,
                 size: 20,
               ),
               color: ColoresApp.fondoTarjeta,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
+                side: const BorderSide(color: ColoresApp.bordeSutil, width: 1),
               ),
               onSelected: (opcion) {
                 if (opcion == 'abrir') {

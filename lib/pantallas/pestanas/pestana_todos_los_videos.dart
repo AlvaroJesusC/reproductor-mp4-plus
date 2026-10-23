@@ -18,17 +18,19 @@ enum CriterioOrden {
 }
 
 enum FiltroCategoria {
-  todos('Todos'),
-  favoritos('Favoritos ⭐'),
-  enProgreso('En progreso ⏳'),
-  completados('Completados ✅'),
-  noVistos('No vistos 🆕');
+  todos('Todos', Icons.apps_rounded),
+  favoritos('Favoritos', Icons.star_rounded),
+  enProgreso('En progreso', Icons.timelapse_rounded),
+  completados('Completados', Icons.check_circle_rounded),
+  noVistos('No vistos', Icons.fiber_new_rounded);
 
   final String etiqueta;
-  const FiltroCategoria(this.etiqueta);
+  final IconData icono;
+  const FiltroCategoria(this.etiqueta, this.icono);
 }
 
-/// Pestaña que lista todos los videos encontrados en el dispositivo con buscador, filtros y cuadrícula.
+/// Pestaña que lista todos los videos encontrados en el dispositivo con buscador,
+/// chips con iconos vectoriales (cero emojis), selector de vista y ordenación.
 class PestanaTodosLosVideos extends StatefulWidget {
   final List<ModeloVideo> videos;
   final Future<void> Function() alRefrescar;
@@ -161,6 +163,7 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
       backgroundColor: ColoresApp.fondoSecundario,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        side: BorderSide(color: ColoresApp.bordeSutil, width: 1),
       ),
       builder: (ctx) {
         return Padding(
@@ -173,14 +176,18 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                 'Ordenar videos por:',
                 style: TextStyle(
                   color: ColoresApp.textoPrincipal,
-                  fontSize: 18,
+                  fontSize: 17,
                   fontWeight: FontWeight.bold,
+                  letterSpacing: 0.1,
                 ),
               ),
               const SizedBox(height: 12),
               ...CriterioOrden.values.map((criterio) {
                 final seleccionado = criterio == _criterioOrden;
                 return ListTile(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                   title: Text(
                     criterio.etiqueta,
                     style: TextStyle(
@@ -218,27 +225,31 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
 
     return Column(
       children: [
-        // Barra de búsqueda, botón de cuadrícula/lista y botón de ordenamiento
+        // 1. BARRA DE BÚSQUEDA Y ACCIONES (ESTILIZADA CON MICRO-BORDES)
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
           child: Row(
             children: [
               Expanded(
                 child: Container(
-                  height: 46,
+                  height: 44,
                   decoration: BoxDecoration(
                     color: ColoresApp.fondoTarjeta,
                     borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: ColoresApp.bordeSutil, width: 1),
                   ),
                   child: TextField(
                     controller: _controladorBusqueda,
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    style: const TextStyle(
+                      color: ColoresApp.textoPrincipal,
+                      fontSize: 13.5,
+                    ),
                     onChanged: _programarBusqueda,
                     decoration: InputDecoration(
                       hintText: 'Buscar películas o series...',
                       hintStyle: const TextStyle(
                         color: ColoresApp.textoSecundario,
-                        fontSize: 14,
+                        fontSize: 13,
                       ),
                       prefixIcon: const Icon(
                         Icons.search_rounded,
@@ -274,15 +285,19 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                   backgroundColor: ColoresApp.fondoTarjeta,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(
+                      color: ColoresApp.bordeSutil,
+                      width: 1,
+                    ),
                   ),
-                  padding: const EdgeInsets.all(11),
+                  padding: const EdgeInsets.all(10),
                 ),
                 icon: Icon(
                   _modoCuadricula
                       ? Icons.view_list_rounded
                       : Icons.grid_view_rounded,
                   color: ColoresApp.textoPrincipal,
-                  size: 21,
+                  size: 20,
                 ),
                 tooltip: _modoCuadricula
                     ? 'Vista en lista'
@@ -297,13 +312,17 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                   backgroundColor: ColoresApp.fondoTarjeta,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(
+                      color: ColoresApp.bordeSutil,
+                      width: 1,
+                    ),
                   ),
-                  padding: const EdgeInsets.all(11),
+                  padding: const EdgeInsets.all(10),
                 ),
                 icon: const Icon(
                   Icons.sort_rounded,
                   color: ColoresApp.textoPrincipal,
-                  size: 21,
+                  size: 20,
                 ),
                 tooltip: 'Ordenar',
                 onPressed: _mostrarModalOrden,
@@ -312,7 +331,7 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
           ),
         ),
 
-        // Barra de chips de filtros rápidos
+        // 2. BARRA DE CHIPS CON ICONOS VECTORIALES (ANTI-AI-SLOP: CERO EMOJIS)
         SizedBox(
           height: 38,
           child: ListView.separated(
@@ -325,17 +344,26 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
               final esSeleccionado = cat == _filtroCategoria;
 
               return ChoiceChip(
+                showCheckmark: false,
+                avatar: Icon(
+                  cat.icono,
+                  size: 15,
+                  color: esSeleccionado
+                      ? Colors.white
+                      : ColoresApp.textoSecundario,
+                ),
                 label: Text(cat.etiqueta),
                 selected: esSeleccionado,
-                selectedColor: ColoresApp.acentoPrimario.withValues(
-                  alpha: 0.25,
-                ),
-                backgroundColor: ColoresApp.fondoSecundario,
-                side: BorderSide(
-                  color: esSeleccionado
-                      ? ColoresApp.acentoPrimario
-                      : Colors.white.withValues(alpha: 0.08),
-                  width: 1,
+                selectedColor: ColoresApp.acentoPrimario.withValues(alpha: 0.22),
+                backgroundColor: ColoresApp.fondoTarjeta,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(
+                    color: esSeleccionado
+                        ? ColoresApp.acentoPrimario.withValues(alpha: 0.6)
+                        : ColoresApp.bordeSutil,
+                    width: 1,
+                  ),
                 ),
                 labelStyle: TextStyle(
                   color: esSeleccionado
@@ -346,6 +374,7 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                       : FontWeight.w500,
                   fontSize: 12,
                 ),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
                 onSelected: (selected) {
                   if (selected) {
                     setState(() {
@@ -359,23 +388,45 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
           ),
         ),
 
-        // Contador de videos
+        // 3. CONTADOR Y ESTADO DE FILTRADO
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              '${videosFiltrados.length} ${videosFiltrados.length == 1 ? 'video encontrado' : 'videos encontrados'}',
-              style: const TextStyle(
-                color: ColoresApp.textoSecundario,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: Row(
+            children: [
+              Text(
+                '${videosFiltrados.length} ${videosFiltrados.length == 1 ? 'video' : 'videos'}',
+                style: const TextStyle(
+                  color: ColoresApp.textoSecundario,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
+              if (_filtroTexto.isNotEmpty ||
+                  _filtroCategoria != FiltroCategoria.todos) ...[
+                const SizedBox(width: 6),
+                Container(
+                  width: 4,
+                  height: 4,
+                  decoration: const BoxDecoration(
+                    color: ColoresApp.acentoPrimario,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'filtrados',
+                  style: TextStyle(
+                    color: ColoresApp.acentoPrimario.withValues(alpha: 0.9),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
 
-        // Lista o Cuadrícula de videos con Pull-to-Refresh y optimización de caché
+        // 4. LISTA O CUADRÍCULA DE VIDEOS
         Expanded(
           child: videosFiltrados.isEmpty
               ? Center(
@@ -384,20 +435,33 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
-                          Icons.video_library_outlined,
-                          color: ColoresApp.textoSecundario,
-                          size: 48,
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: ColoresApp.fondoTarjeta,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: ColoresApp.bordeSutil,
+                              width: 1,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.video_library_outlined,
+                            color: ColoresApp.textoAtenuado,
+                            size: 30,
+                          ),
                         ),
                         const SizedBox(height: 16),
                         Text(
                           _filtroTexto.isNotEmpty
                               ? 'No se encontraron videos con "$_filtroTexto"'
-                              : 'No hay videos para este filtro',
+                              : 'No hay videos en esta sección',
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                             color: ColoresApp.textoPrincipal,
-                            fontSize: 16,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
@@ -429,6 +493,7 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                               itemBuilder: (context, index) {
                                 final video = videosFiltrados[index];
                                 return RepaintBoundary(
+                                  key: ValueKey(video.ruta),
                                   child: TarjetaVideoCuadricula(
                                     video: video,
                                     alPresionar: () async {
@@ -462,6 +527,7 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                           itemBuilder: (context, index) {
                             final video = videosFiltrados[index];
                             return RepaintBoundary(
+                              key: ValueKey(video.ruta),
                               child: TarjetaVideo(
                                 video: video,
                                 alPresionar: () async {

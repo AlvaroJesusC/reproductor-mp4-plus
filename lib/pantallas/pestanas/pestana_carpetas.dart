@@ -8,7 +8,7 @@ import '../../widgets/tarjeta_carpeta.dart';
 import '../../widgets/tarjeta_video.dart';
 import '../pantalla_reproductor.dart';
 
-/// Pestaña de carpetas con estructura de explorador de archivos minimalista, migas de pan y alto rendimiento.
+/// Pestaña de carpetas estilo colección multimedia con migas de pan y alto rendimiento.
 class PestanaCarpetas extends StatefulWidget {
   final List<ModeloCarpetaVideo> carpetasGlobales;
   final Future<void> Function() alRefrescar;
@@ -57,7 +57,7 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
       _rutaRaizPersonalizada = rutaGuardada;
       _navegarADirectorio(rutaGuardada, limpiarPila: true);
     } else {
-      final rutaMovies = '/storage/emulated/0/Movies';
+      const rutaMovies = '/storage/emulated/0/Movies';
       if (await Directory(rutaMovies).exists()) {
         _rutaRaizPersonalizada = rutaMovies;
         await ServicioPreferencias.guardarCarpetaRaizPersonalizada(rutaMovies);
@@ -194,7 +194,7 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
       backgroundColor: ColoresApp.fondoPrincipal,
       body: Column(
         children: [
-          // 1. BARRA DE MIGAS DE PAN (BREADCRUMBS) ESTILO EXPLORADOR
+          // 1. BARRA DE MIGAS DE PAN (BREADCRUMBS) ESTILO EXPLORADOR CINEMÁTICO
           _construirBarraMigasDePan(),
 
           // 2. LISTA DE ELEMENTOS VIRTUALIZADA CON LAZY LOADING
@@ -205,14 +205,6 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        mini: true,
-        backgroundColor: const Color(0xFF21262D),
-        foregroundColor: Colors.white,
-        tooltip: 'Elegir carpeta raíz',
-        onPressed: _elegirNuevaCarpetaRaiz,
-        child: const Icon(Icons.add_rounded, size: 22),
-      ),
     );
   }
 
@@ -222,10 +214,12 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: const BoxDecoration(
-        color: Color(0xFF0D1117),
-        border: Border(bottom: BorderSide(color: Color(0xFF21262D), width: 1)),
+        color: ColoresApp.fondoSecundario,
+        border: Border(
+          bottom: BorderSide(color: ColoresApp.bordeSutil, width: 1),
+        ),
       ),
       child: Row(
         children: [
@@ -239,34 +233,46 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
                   for (int i = 0; i < segmentos.length; i++) ...[
                     if (i > 0)
                       const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 4),
+                        padding: EdgeInsets.symmetric(horizontal: 3),
                         child: Icon(
                           Icons.chevron_right_rounded,
-                          color: Color(0xFF8B949E),
+                          color: ColoresApp.textoAtenuado,
                           size: 16,
                         ),
                       ),
                     InkWell(
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.circular(6),
                       onTap: () {
                         final seg = segmentos[i];
                         _navegarADirectorio(seg.ruta);
                       },
-                      child: Padding(
+                      child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 2,
+                          horizontal: 6,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: i == segmentos.length - 1
+                              ? ColoresApp.fondoTarjeta
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(6),
+                          border: i == segmentos.length - 1
+                              ? Border.all(
+                                  color: ColoresApp.bordeSutil,
+                                  width: 0.8,
+                                )
+                              : null,
                         ),
                         child: Text(
                           segmentos[i].etiqueta,
                           style: TextStyle(
                             color: i == segmentos.length - 1
-                                ? Colors.white
-                                : const Color(0xFF8B949E),
+                                ? ColoresApp.textoPrincipal
+                                : ColoresApp.textoSecundario,
                             fontWeight: i == segmentos.length - 1
                                 ? FontWeight.bold
                                 : FontWeight.normal,
-                            fontSize: 13,
+                            fontSize: 12.5,
                           ),
                         ),
                       ),
@@ -277,16 +283,28 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
             ),
           ),
 
+          // Botón directo para seleccionar carpeta raíz
+          IconButton(
+            icon: const Icon(
+              Icons.create_new_folder_outlined,
+              color: ColoresApp.textoSecundario,
+              size: 20,
+            ),
+            tooltip: 'Elegir Carpeta Raíz',
+            onPressed: _elegirNuevaCarpetaRaiz,
+          ),
+
           // Menú de opciones de la barra de migas
           PopupMenuButton<String>(
             icon: const Icon(
               Icons.more_vert_rounded,
-              color: Color(0xFF8B949E),
+              color: ColoresApp.textoSecundario,
               size: 20,
             ),
             color: ColoresApp.fondoTarjeta,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),
+              side: const BorderSide(color: ColoresApp.bordeSutil, width: 1),
             ),
             onSelected: (opcion) async {
               if (opcion == 'cambiar_raiz') {
@@ -378,7 +396,7 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
     );
   }
 
-  /// Vista jerárquica con diseño minimalista igual al de la captura de pantalla.
+  /// Vista jerárquica con diseño minimalista de colecciones multimedia.
   Widget _construirVistaJerarquicaLazy() {
     if (_estaCargandoDirectorio) {
       return const Center(
@@ -396,16 +414,25 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.folder_open_rounded,
-                color: ColoresApp.textoSecundario,
-                size: 48,
+              Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  color: ColoresApp.fondoTarjeta,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: ColoresApp.bordeSutil, width: 1),
+                ),
+                child: const Icon(
+                  Icons.folder_open_rounded,
+                  color: ColoresApp.textoAtenuado,
+                  size: 32,
+                ),
               ),
               const SizedBox(height: 16),
               const Text(
                 'Carpeta vacía',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: ColoresApp.textoPrincipal,
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
                 ),
@@ -423,6 +450,10 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: ColoresApp.fondoTarjeta,
+                    side: const BorderSide(
+                      color: ColoresApp.bordeSutil,
+                      width: 1,
+                    ),
                   ),
                   icon: const Icon(
                     Icons.arrow_back_rounded,
@@ -456,13 +487,14 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
-          // 1. LISTA DE SUBCARPETAS (Estilo minimalista idéntico a la captura)
+          // 1. LISTA DE SUBCARPETAS (Colecciones multimedia)
           if (subcarpetas.isNotEmpty)
             SliverList.builder(
               itemCount: subcarpetas.length,
               itemBuilder: (context, index) {
                 final subcarpeta = subcarpetas[index];
                 return RepaintBoundary(
+                  key: ValueKey(subcarpeta.ruta),
                   child: TarjetaCarpeta(
                     carpeta: subcarpeta,
                     alPresionar: () {
@@ -480,6 +512,7 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
               itemBuilder: (context, index) {
                 final video = videos[index];
                 return RepaintBoundary(
+                  key: ValueKey(video.ruta),
                   child: TarjetaVideo(
                     video: video,
                     alPresionar: () async {
@@ -532,6 +565,7 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
         itemBuilder: (context, index) {
           final carpeta = widget.carpetasGlobales[index];
           return RepaintBoundary(
+            key: ValueKey(carpeta.ruta),
             child: TarjetaCarpeta(
               carpeta: carpeta,
               alPresionar: () {
