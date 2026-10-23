@@ -774,6 +774,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     if (!_estaInicializado || _estaSaliendo) return;
     showDialog(
       context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (_) => ModalPistasAudioSubtitulos(
         pistas: _reproductor.state.tracks,
         pistaAudioActual: _reproductor.state.track.audio,
@@ -933,6 +934,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     if (_estaSaliendo) return;
     showDialog(
       context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (_) => ModalTemporizadorApagado(
         segundosRestantes: _segundosRestantesApagado,
         apagarAlTerminarVideo: _apagarAlTerminarVideo,
@@ -1021,6 +1023,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     if (!_estaInicializado || _estaSaliendo) return;
     showDialog(
       context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (_) => ModalSincronizacionPistas(
         desfaseSubtitulosSegundos: _desfaseSubtitulosSegundos,
         desfaseAudioSegundos: _desfaseAudioSegundos,
@@ -1299,9 +1302,55 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   void _mostrarInformacionVideo() {
     if (_estaSaliendo) return;
-    showDialog(
-      context: context,
-      builder: (_) => DialogoInformacionVideo(video: _videoActual),
+
+    // Asegurar duración actualizada del reproductor si el modelo aún no la tenía
+    final duracionMs = _reproductor.state.duration.inMilliseconds;
+    if (duracionMs > 0 && _videoActual.duracionTotalMs <= 0) {
+      _videoActual.duracionTotalMs = duracionMs;
+    }
+
+    int? ancho = _reproductor.state.width ??
+        _reproductor.state.videoParams.w ??
+        _reproductor.state.track.video.w;
+    int? alto = _reproductor.state.height ??
+        _reproductor.state.videoParams.h ??
+        _reproductor.state.track.video.h;
+    double? fps = _reproductor.state.track.video.fps;
+
+    if ((fps == null || fps == 0) && _reproductor.state.tracks.video.isNotEmpty) {
+      for (final t in _reproductor.state.tracks.video) {
+        if (t.fps != null && t.fps! > 0) {
+          fps = t.fps;
+          break;
+        }
+      }
+    }
+
+    if ((ancho == null || alto == null) &&
+        _reproductor.state.tracks.video.isNotEmpty) {
+      for (final t in _reproductor.state.tracks.video) {
+        if (t.w != null && t.h != null) {
+          ancho ??= t.w;
+          alto ??= t.h;
+          break;
+        }
+      }
+    }
+
+    // Corregir dimensiones si el video tiene rotación física de 90° o 270°
+    final rotacion = _reproductor.state.videoParams.rotate;
+    if ((rotacion == 90 || rotacion == 270) && ancho != null && alto != null) {
+      final temp = ancho;
+      ancho = alto;
+      alto = temp;
+    }
+
+    DialogoInformacionVideo.mostrar(
+      context,
+      _videoActual,
+      ancho: ancho,
+      alto: alto,
+      fps: fps,
     );
   }
 
@@ -1685,6 +1734,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                         alMostrarModalVelocidad: () {
                           showDialog(
                             context: context,
+                            barrierColor: Colors.black.withValues(alpha: 0.25),
                             builder: (_) => ModalVelocidad(
                               velocidadActual: _velocidadActual,
                               alSeleccionarVelocidad: _cambiarVelocidad,
@@ -1694,6 +1744,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                         alMostrarModalAspecto: () {
                           showDialog(
                             context: context,
+                            barrierColor: Colors.black.withValues(alpha: 0.25),
                             builder: (_) => ModalAspecto(
                               aspectoActual: _aspectoActual,
                               alSeleccionarAspecto: _cambiarAspecto,

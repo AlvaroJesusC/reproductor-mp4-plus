@@ -23,11 +23,11 @@ class ModalTemporizadorApagado extends StatelessWidget {
         apagarAlTerminarVideo;
 
     return Dialog(
-      backgroundColor: const Color(0xFF161B22),
+      backgroundColor: ColoresApp.fondoModalTranslucido,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
         side: BorderSide(
-          color: Colors.white.withValues(alpha: 0.12),
+          color: Colors.white.withValues(alpha: 0.15),
           width: 1.0,
         ),
       ),

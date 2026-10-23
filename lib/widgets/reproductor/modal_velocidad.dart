@@ -26,8 +26,14 @@ class ModalVelocidad extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: ColoresApp.fondoSecundario,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      backgroundColor: ColoresApp.fondoModalTranslucido,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: Colors.white.withValues(alpha: 0.15),
+          width: 1.0,
+        ),
+      ),
       child: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -74,7 +80,13 @@ class ModalVelocidad extends StatelessWidget {
                     ),
                     selected: esSeleccionada,
                     selectedColor: ColoresApp.acentoPrimario,
-                    backgroundColor: ColoresApp.fondoTarjeta,
+                    backgroundColor: Colors.white.withValues(alpha: 0.08),
+                    side: BorderSide(
+                      color: esSeleccionada
+                          ? ColoresApp.acentoPrimario
+                          : Colors.white.withValues(alpha: 0.15),
+                      width: 1,
+                    ),
                     onSelected: (seleccionado) {
                       if (seleccionado) {
                         alSeleccionarVelocidad(v);

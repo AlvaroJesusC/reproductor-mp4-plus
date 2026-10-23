@@ -49,4 +49,7 @@ class ColoresApp {
   static const Color fondoPastillaTiempo = Color(
     0xCC000000,
   ); // Pastilla oscura semitransparente sobre miniatura
+  static const Color fondoModalTranslucido = Color(
+    0x660A0D14,
+  ); // Fondo al 40% de opacidad para modales y opciones sobre video
 }

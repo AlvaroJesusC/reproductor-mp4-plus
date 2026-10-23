@@ -28,8 +28,14 @@ class ModalPistasAudioSubtitulos extends StatelessWidget {
     return DefaultTabController(
       length: 2,
       child: Dialog(
-        backgroundColor: ColoresApp.fondoSecundario,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: ColoresApp.fondoModalTranslucido,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: Colors.white.withValues(alpha: 0.15),
+            width: 1.0,
+          ),
+        ),
         child: Container(
           width: 380,
           constraints: BoxConstraints(
@@ -41,9 +47,12 @@ class ModalPistasAudioSubtitulos extends StatelessWidget {
             children: [
               // Barra de pestañas (Audio / Subtítulos)
               Container(
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   border: Border(
-                    bottom: BorderSide(color: ColoresApp.bordeOSD, width: 1),
+                    bottom: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.12),
+                      width: 1,
+                    ),
                   ),
                 ),
                 child: const TabBar(

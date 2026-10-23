@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../constantes/colores_app.dart';
 import '../../modelos/modelo_opciones_reproduccion.dart';
 import '../../modelos/modelo_video.dart';
+import 'panel_lateral_opciones.dart';
 
 /// Controles cinemáticos, minimalistas y completos con diseño OLED y micro-aislamiento reactivo.
 class ControlesReproductor extends StatelessWidget {
@@ -396,7 +397,7 @@ class ControlesReproductor extends StatelessWidget {
               onPressed: alAlternarOrientacion,
             ),
             const SizedBox(width: 8),
-            PopupMenuButton<String>(
+            IconButton(
               icon: const Icon(
                 Icons.more_horiz_rounded,
                 color: Colors.white,
@@ -404,148 +405,19 @@ class ControlesReproductor extends StatelessWidget {
               ),
               padding: const EdgeInsets.all(8),
               constraints: const BoxConstraints(),
-              color: ColoresApp.fondoTarjeta,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              onSelected: (opcion) {
-                if (opcion == 'velocidad') {
-                  alMostrarModalVelocidad();
-                } else if (opcion == 'sync') {
-                  alMostrarSincronizacion?.call();
-                } else if (opcion == 'bucle_a') {
-                  alMarcarPuntoA?.call();
-                } else if (opcion == 'bucle_b') {
-                  alMarcarPuntoB?.call();
-                } else if (opcion == 'limpiar_bucle') {
-                  alLimpiarBucle?.call();
-                } else if (opcion == 'info') {
-                  alMostrarInfoVideo?.call();
-                } else if (opcion == 'rotar') {
-                  alAlternarOrientacion();
-                } else if (opcion == 'auto_rotar') {
-                  alLiberarOrientacion?.call();
-                }
+              tooltip: 'Más opciones',
+              onPressed: () {
+                PanelLateralOpciones.mostrar(
+                  context,
+                  velocidadActual: velocidadActual,
+                  esPantallaCompletaHorizontal: esPantallaCompletaHorizontal,
+                  alMostrarModalVelocidad: alMostrarModalVelocidad,
+                  alMostrarSincronizacion: alMostrarSincronizacion,
+                  alMostrarInfoVideo: alMostrarInfoVideo,
+                  alAlternarOrientacion: alAlternarOrientacion,
+                  alLiberarOrientacion: alLiberarOrientacion,
+                );
               },
-              itemBuilder: (ctx) => [
-                PopupMenuItem(
-                  value: 'velocidad',
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.speed_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Text('Velocidad (${velocidadActual}x)'),
-                    ],
-                  ),
-                ),
-                if (alMostrarSincronizacion != null)
-                  const PopupMenuItem(
-                    value: 'sync',
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.sync_rounded,
-                          color: ColoresApp.acentoAmbar,
-                          size: 20,
-                        ),
-                        SizedBox(width: 10),
-                        Text('Sincronizar Audio / Subtítulos'),
-                      ],
-                    ),
-                  ),
-                PopupMenuItem(
-                  value: 'bucle_a',
-                  child: const Row(
-                    children: [
-                      Icon(Icons.repeat_rounded, color: Colors.white, size: 20),
-                      SizedBox(width: 10),
-                      Text('Bucle A-B: Fijar Punto [A]'),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'bucle_b',
-                  child: const Row(
-                    children: [
-                      Icon(
-                        Icons.repeat_on_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      SizedBox(width: 10),
-                      Text('Bucle A-B: Fijar Punto [B]'),
-                    ],
-                  ),
-                ),
-                if (bucleABActivo)
-                  const PopupMenuItem(
-                    value: 'limpiar_bucle',
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.close_rounded,
-                          color: ColoresApp.acentoSecundario,
-                          size: 20,
-                        ),
-                        SizedBox(width: 10),
-                        Text('Desactivar Bucle A-B'),
-                      ],
-                    ),
-                  ),
-                if (alMostrarInfoVideo != null)
-                  const PopupMenuItem(
-                    value: 'info',
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.info_outline_rounded,
-                          color: Colors.white70,
-                          size: 20,
-                        ),
-                        SizedBox(width: 10),
-                        Text('Información del Video'),
-                      ],
-                    ),
-                  ),
-                PopupMenuItem(
-                  value: 'rotar',
-                  child: Row(
-                    children: [
-                      Icon(
-                        esPantallaCompletaHorizontal
-                            ? Icons.screen_lock_portrait_rounded
-                            : Icons.screen_lock_landscape_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        esPantallaCompletaHorizontal
-                            ? 'Fijar en vertical'
-                            : 'Fijar en horizontal',
-                      ),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'auto_rotar',
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.screen_rotation_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      SizedBox(width: 10),
-                      Text('Auto-rotación libre (Sensores)'),
-                    ],
-                  ),
-                ),
-              ],
             ),
           ],
         ),

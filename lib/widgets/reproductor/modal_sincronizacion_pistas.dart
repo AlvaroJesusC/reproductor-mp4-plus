@@ -49,11 +49,11 @@ class _ModalSincronizacionPistasState extends State<ModalSincronizacionPistas> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: const Color(0xFF161B22),
+      backgroundColor: ColoresApp.fondoModalTranslucido,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
         side: BorderSide(
-          color: Colors.white.withValues(alpha: 0.12),
+          color: Colors.white.withValues(alpha: 0.15),
           width: 1.0,
         ),
       ),
@@ -101,7 +101,10 @@ class _ModalSincronizacionPistasState extends State<ModalSincronizacionPistas> {
                 alReiniciar: () => _ajustarSubtitulos(-_desfaseSubtitulos),
               ),
 
-              const Divider(color: Color(0xFF21262D), height: 32),
+              Divider(
+                color: Colors.white.withValues(alpha: 0.10),
+                height: 32,
+              ),
 
               // 2. SECCIÓN AUDIO
               _construirControlDesfase(
@@ -227,9 +230,9 @@ class _ModalSincronizacionPistasState extends State<ModalSincronizacionPistas> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
-          color: const Color(0xFF21262D),
+          color: Colors.white.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
         ),
         child: Text(
           etiqueta,
