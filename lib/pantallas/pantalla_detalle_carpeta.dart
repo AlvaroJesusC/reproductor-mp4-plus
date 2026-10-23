@@ -8,10 +8,7 @@ import 'pantalla_reproductor.dart';
 class PantallaDetalleCarpeta extends StatefulWidget {
   final ModeloCarpetaVideo carpeta;
 
-  const PantallaDetalleCarpeta({
-    super.key,
-    required this.carpeta,
-  });
+  const PantallaDetalleCarpeta({super.key, required this.carpeta});
 
   @override
   State<PantallaDetalleCarpeta> createState() => _PantallaDetalleCarpetaState();
@@ -33,22 +30,39 @@ class _PantallaDetalleCarpetaState extends State<PantallaDetalleCarpeta> {
             ),
             Text(
               '${videos.length} ${videos.length == 1 ? 'video' : 'videos'} • ${widget.carpeta.tamanoTotalLegible}',
-              style: const TextStyle(fontSize: 12, color: ColoresApp.textoSecundario),
+              style: const TextStyle(
+                fontSize: 12,
+                color: ColoresApp.textoSecundario,
+              ),
             ),
           ],
         ),
       ),
       body: ListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 8),
+        cacheExtent: 500,
         itemCount: videos.length,
         itemBuilder: (context, index) {
           final video = videos[index];
-          return TarjetaVideo(
-            video: video,
-            alPresionar: () async {
-              await PantallaReproductor.abrir(context, video);
-              if (mounted) setState(() {});
-            },
+          return RepaintBoundary(
+            child: TarjetaVideo(
+              video: video,
+              alPresionar: () async {
+                await PantallaReproductor.abrir(
+                  context,
+                  video,
+                  listaReproduccion: videos,
+                  indiceInicial: index,
+                );
+                if (mounted) setState(() {});
+              },
+              alAlternarFavorito: () {
+                if (mounted) setState(() {});
+              },
+              alReiniciarProgreso: () {
+                if (mounted) setState(() {});
+              },
+            ),
           );
         },
       ),

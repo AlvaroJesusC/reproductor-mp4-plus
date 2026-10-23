@@ -15,10 +15,7 @@ class ServicioPermisos {
 
     if (sdkInt >= 33) {
       // Android 13+ utiliza permisos granulares de medios
-      final estados = await [
-        Permission.videos,
-        Permission.audio,
-      ].request();
+      final estados = await [Permission.videos, Permission.audio].request();
 
       final videosOtorgado = estados[Permission.videos]?.isGranted ?? false;
       final audioOtorgado = estados[Permission.audio]?.isGranted ?? false;
@@ -30,7 +27,7 @@ class ServicioPermisos {
       if (estado.isGranted) {
         return true;
       }
-      
+
       // En Android 11 (API 30) se puede intentar solicitar gestión si storage falla
       if (sdkInt >= 30) {
         final estadoManage = await Permission.manageExternalStorage.request();

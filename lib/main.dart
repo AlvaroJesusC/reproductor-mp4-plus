@@ -1,16 +1,27 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'constantes/temas_app.dart';
 import 'pantallas/pantalla_principal.dart';
+import 'servicios/servicio_miniaturas_video.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
 
+  // Optimización de memoria RAM: acotar la caché de imágenes decodificadas de Flutter
+  // para evitar picos de memoria (OOM) al navegar por listas extensas de videos.
+  PaintingBinding.instance.imageCache.maximumSizeBytes =
+      40 * 1024 * 1024; // 40 MB
+  PaintingBinding.instance.imageCache.maximumSize = 150;
+
+  // Inicializar directorio de caché de miniaturas para acceso sincrónico ultrarrápido
+  unawaited(ServicioMiniaturasVideo.inicializar());
+
   // Configuración de estilo de la barra de estado y navegación
   SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle( 
+    const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
       systemNavigationBarColor: Color(0xFF0D1117),

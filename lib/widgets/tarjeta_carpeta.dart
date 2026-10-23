@@ -81,7 +81,9 @@ class TarjetaCarpeta extends StatelessWidget {
                 size: 20,
               ),
               color: ColoresApp.fondoTarjeta,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
               onSelected: (opcion) {
                 if (opcion == 'abrir') {
                   alPresionar();
@@ -100,7 +102,11 @@ class TarjetaCarpeta extends StatelessWidget {
                   value: 'abrir',
                   child: Row(
                     children: [
-                      Icon(Icons.folder_open_rounded, color: Colors.white, size: 18),
+                      Icon(
+                        Icons.folder_open_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      ),
                       SizedBox(width: 10),
                       Text('Abrir carpeta'),
                     ],
@@ -110,7 +116,11 @@ class TarjetaCarpeta extends StatelessWidget {
                   value: 'copiar_ruta',
                   child: Row(
                     children: [
-                      Icon(Icons.copy_rounded, color: ColoresApp.textoSecundario, size: 18),
+                      Icon(
+                        Icons.copy_rounded,
+                        color: ColoresApp.textoSecundario,
+                        size: 18,
+                      ),
                       SizedBox(width: 10),
                       Text('Copiar ruta'),
                     ],

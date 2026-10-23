@@ -28,66 +28,75 @@ class ModalVelocidad extends StatelessWidget {
     return Dialog(
       backgroundColor: ColoresApp.fondoSecundario,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.speed_rounded, color: ColoresApp.acentoPrimario),
-                const SizedBox(width: 10),
-                const Text(
-                  'Velocidad de Reproducción',
-                  style: TextStyle(
-                    color: ColoresApp.textoPrincipal,
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.speed_rounded,
+                    color: ColoresApp.acentoPrimario,
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: velocidadesDisponibles.map((v) {
-                final esSeleccionada = (v - velocidadActual).abs() < 0.01;
-                final etiqueta = v == 1.0 ? '1.0x (Normal)' : '${v}x';
-
-                return ChoiceChip(
-                  label: Text(
-                    etiqueta,
+                  const SizedBox(width: 10),
+                  const Text(
+                    'Velocidad de Reproducción',
                     style: TextStyle(
-                      color: esSeleccionada ? Colors.white : ColoresApp.textoPrincipal,
-                      fontWeight: esSeleccionada ? FontWeight.bold : FontWeight.normal,
+                      color: ColoresApp.textoPrincipal,
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                  selected: esSeleccionada,
-                  selectedColor: ColoresApp.acentoPrimario,
-                  backgroundColor: ColoresApp.fondoTarjeta,
-                  onSelected: (seleccionado) {
-                    if (seleccionado) {
-                      alSeleccionarVelocidad(v);
-                      Navigator.of(context).pop();
-                    }
-                  },
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text(
-                  'Cerrar',
-                  style: TextStyle(color: ColoresApp.textoSecundario),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: velocidadesDisponibles.map((v) {
+                  final esSeleccionada = (v - velocidadActual).abs() < 0.01;
+                  final etiqueta = v == 1.0 ? '1.0x (Normal)' : '${v}x';
+
+                  return ChoiceChip(
+                    label: Text(
+                      etiqueta,
+                      style: TextStyle(
+                        color: esSeleccionada
+                            ? Colors.white
+                            : ColoresApp.textoPrincipal,
+                        fontWeight: esSeleccionada
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                    ),
+                    selected: esSeleccionada,
+                    selectedColor: ColoresApp.acentoPrimario,
+                    backgroundColor: ColoresApp.fondoTarjeta,
+                    onSelected: (seleccionado) {
+                      if (seleccionado) {
+                        alSeleccionarVelocidad(v);
+                        Navigator.of(context).pop();
+                      }
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text(
+                    'Cerrar',
+                    style: TextStyle(color: ColoresApp.textoSecundario),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

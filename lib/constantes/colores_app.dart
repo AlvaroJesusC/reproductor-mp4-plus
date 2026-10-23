@@ -9,10 +9,19 @@ class ColoresApp {
   static const Color fondoReproductor = Color(0xFF000000);
 
   // Acentos y marcas
-  static const Color acentoPrimario = Color(0xFFE50914); // Rojo Cine estilo Netflix/VLC
+  static const Color acentoPrimario = Color(
+    0xFFE50914,
+  ); // Rojo Cine estilo Netflix/VLC
   static const Color acentoSecundario = Color(0xFFFF5252);
-  static const Color acentoAmbar = Color(0xFFFFB300); // Ámbar para advertencias/tiempos
-  static const Color acentoAzul = Color(0xFF2979FF); // Azul para brillo/indicadores
+  static const Color acentoAmbar = Color(
+    0xFFFFB300,
+  ); // Ámbar para advertencias/tiempos
+  static const Color acentoAzul = Color(
+    0xFF2979FF,
+  ); // Azul para brillo/indicadores
+  static const Color acentoVerde = Color(
+    0xFF00E676,
+  ); // Verde para capítulos completados / vistos
 
   // Textos
   static const Color textoPrincipal = Color(0xFFF0F6FC);

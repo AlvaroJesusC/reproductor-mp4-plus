@@ -38,18 +38,22 @@ class TemasApp {
       cardTheme: CardThemeData(
         color: ColoresApp.fondoTarjeta,
         elevation: 2,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: ColoresApp.fondoSecundario,
         indicatorColor: ColoresApp.acentoPrimario.withValues(alpha: 0.2),
         iconTheme: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return const IconThemeData(color: ColoresApp.acentoPrimario, size: 26);
+            return const IconThemeData(
+              color: ColoresApp.acentoPrimario,
+              size: 26,
+            );
           }
-          return const IconThemeData(color: ColoresApp.textoSecundario, size: 24);
+          return const IconThemeData(
+            color: ColoresApp.textoSecundario,
+            size: 24,
+          );
         }),
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
@@ -76,9 +80,7 @@ class TemasApp {
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: ColoresApp.fondoSecundario,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         titleTextStyle: const TextStyle(
           color: ColoresApp.textoPrincipal,
           fontSize: 18,

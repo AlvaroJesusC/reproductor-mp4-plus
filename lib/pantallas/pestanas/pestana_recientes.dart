@@ -66,20 +66,29 @@ class PestanaRecientes extends StatelessWidget {
 
     return ListView.builder(
       padding: const EdgeInsets.only(top: 8, bottom: 80),
+      cacheExtent: 500,
       itemCount: videosRecientes.length,
       itemBuilder: (context, index) {
         final video = videosRecientes[index];
-        return TarjetaVideo(
-          video: video,
-          alPresionar: () async {
-            await PantallaReproductor.abrir(context, video);
-            alActualizar();
-          },
-          alReiniciarProgreso: () async {
-            await ServicioPreferencias.borrarProgresoVideo(video.ruta);
-            video.posicionGuardadaMs = 0;
-            alActualizar();
-          },
+        return RepaintBoundary(
+          child: TarjetaVideo(
+            video: video,
+            alPresionar: () async {
+              await PantallaReproductor.abrir(
+                context,
+                video,
+                listaReproduccion: videosRecientes,
+                indiceInicial: index,
+              );
+              alActualizar();
+            },
+            alReiniciarProgreso: () async {
+              await ServicioPreferencias.borrarProgresoVideo(video.ruta);
+              video.posicionGuardadaMs = 0;
+              alActualizar();
+            },
+            alAlternarFavorito: alActualizar,
+          ),
         );
       },
     );

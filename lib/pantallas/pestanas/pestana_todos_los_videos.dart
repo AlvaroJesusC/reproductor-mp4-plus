@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../constantes/colores_app.dart';
 import '../../modelos/modelo_video.dart';
+import '../../servicios/servicio_preferencias.dart';
 import '../../widgets/tarjeta_video.dart';
 import '../pantalla_reproductor.dart';
 
@@ -16,7 +17,18 @@ enum CriterioOrden {
   const CriterioOrden(this.etiqueta);
 }
 
-/// Pestaña que lista todos los videos encontrados en el dispositivo con buscador y orden.
+enum FiltroCategoria {
+  todos('Todos'),
+  favoritos('Favoritos ⭐'),
+  enProgreso('En progreso ⏳'),
+  completados('Completados ✅'),
+  noVistos('No vistos 🆕');
+
+  final String etiqueta;
+  const FiltroCategoria(this.etiqueta);
+}
+
+/// Pestaña que lista todos los videos encontrados en el dispositivo con buscador, filtros y cuadrícula.
 class PestanaTodosLosVideos extends StatefulWidget {
   final List<ModeloVideo> videos;
   final Future<void> Function() alRefrescar;
@@ -38,12 +50,21 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
   Timer? _temporizadorBusqueda;
   String _filtroTexto = '';
   CriterioOrden _criterioOrden = CriterioOrden.fechaReciente;
+  FiltroCategoria _filtroCategoria = FiltroCategoria.todos;
+  bool _modoCuadricula = false;
   late List<ModeloVideo> _videosVisibles;
 
   @override
   void initState() {
     super.initState();
     _videosVisibles = _calcularVideosVisibles();
+    ServicioPreferencias.obtenerModoVistaCuadricula().then((esCuadricula) {
+      if (mounted) {
+        setState(() {
+          _modoCuadricula = esCuadricula;
+        });
+      }
+    });
   }
 
   @override
@@ -64,6 +85,23 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
   List<ModeloVideo> _calcularVideosVisibles() {
     final filtroNormalizado = _filtroTexto.trim().toLowerCase();
     final lista = widget.videos.where((v) {
+      // 1. Filtro por categoría rápida
+      if (_filtroCategoria == FiltroCategoria.favoritos && !v.esFavorito) {
+        return false;
+      }
+      if (_filtroCategoria == FiltroCategoria.enProgreso && !v.tieneProgreso) {
+        return false;
+      }
+      if (_filtroCategoria == FiltroCategoria.completados &&
+          !v.estaCompletado) {
+        return false;
+      }
+      if (_filtroCategoria == FiltroCategoria.noVistos &&
+          (v.posicionGuardadaMs > 0 || v.estaCompletado)) {
+        return false;
+      }
+
+      // 2. Filtro por texto
       if (filtroNormalizado.isEmpty) return true;
       return v.nombreSinExtension.toLowerCase().contains(filtroNormalizado) ||
           v.carpetaContenedora.toLowerCase().contains(filtroNormalizado);
@@ -108,6 +146,13 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
       _filtroTexto = valor;
       _actualizarVideosVisibles();
     });
+  }
+
+  void _alternarModoVista() {
+    setState(() {
+      _modoCuadricula = !_modoCuadricula;
+    });
+    ServicioPreferencias.guardarModoVistaCuadricula(_modoCuadricula);
   }
 
   void _mostrarModalOrden() {
@@ -173,9 +218,9 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
 
     return Column(
       children: [
-        // Barra de búsqueda y botón de ordenamiento
+        // Barra de búsqueda, botón de cuadrícula/lista y botón de ordenamiento
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
           child: Row(
             children: [
               Expanded(
@@ -222,6 +267,31 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                 ),
               ),
               const SizedBox(width: 8),
+
+              // Botón alternar Cuadrícula / Lista
+              IconButton(
+                style: IconButton.styleFrom(
+                  backgroundColor: ColoresApp.fondoTarjeta,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.all(11),
+                ),
+                icon: Icon(
+                  _modoCuadricula
+                      ? Icons.view_list_rounded
+                      : Icons.grid_view_rounded,
+                  color: ColoresApp.textoPrincipal,
+                  size: 21,
+                ),
+                tooltip: _modoCuadricula
+                    ? 'Vista en lista'
+                    : 'Vista en cuadrícula',
+                onPressed: _alternarModoVista,
+              ),
+              const SizedBox(width: 6),
+
+              // Botón de ordenamiento
               IconButton(
                 style: IconButton.styleFrom(
                   backgroundColor: ColoresApp.fondoTarjeta,
@@ -233,11 +303,59 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                 icon: const Icon(
                   Icons.sort_rounded,
                   color: ColoresApp.textoPrincipal,
+                  size: 21,
                 ),
                 tooltip: 'Ordenar',
                 onPressed: _mostrarModalOrden,
               ),
             ],
+          ),
+        ),
+
+        // Barra de chips de filtros rápidos
+        SizedBox(
+          height: 38,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            scrollDirection: Axis.horizontal,
+            itemCount: FiltroCategoria.values.length,
+            separatorBuilder: (_, index) => const SizedBox(width: 8),
+            itemBuilder: (context, i) {
+              final cat = FiltroCategoria.values[i];
+              final esSeleccionado = cat == _filtroCategoria;
+
+              return ChoiceChip(
+                label: Text(cat.etiqueta),
+                selected: esSeleccionado,
+                selectedColor: ColoresApp.acentoPrimario.withValues(
+                  alpha: 0.25,
+                ),
+                backgroundColor: ColoresApp.fondoSecundario,
+                side: BorderSide(
+                  color: esSeleccionado
+                      ? ColoresApp.acentoPrimario
+                      : Colors.white.withValues(alpha: 0.08),
+                  width: 1,
+                ),
+                labelStyle: TextStyle(
+                  color: esSeleccionado
+                      ? Colors.white
+                      : ColoresApp.textoSecundario,
+                  fontWeight: esSeleccionado
+                      ? FontWeight.bold
+                      : FontWeight.w500,
+                  fontSize: 12,
+                ),
+                onSelected: (selected) {
+                  if (selected) {
+                    setState(() {
+                      _filtroCategoria = cat;
+                    });
+                    _actualizarVideosVisibles();
+                  }
+                },
+              );
+            },
           ),
         ),
 
@@ -257,7 +375,7 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
           ),
         ),
 
-        // Lista de videos con Pull-to-Refresh
+        // Lista o Cuadrícula de videos con Pull-to-Refresh y optimización de caché
         Expanded(
           child: videosFiltrados.isEmpty
               ? Center(
@@ -275,7 +393,7 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                         Text(
                           _filtroTexto.isNotEmpty
                               ? 'No se encontraron videos con "$_filtroTexto"'
-                              : 'No se encontraron archivos de video',
+                              : 'No hay videos para este filtro',
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                             color: ColoresApp.textoPrincipal,
@@ -290,22 +408,84 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                   color: ColoresApp.acentoPrimario,
                   backgroundColor: ColoresApp.fondoSecundario,
                   onRefresh: widget.alRefrescar,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.only(top: 4, bottom: 80),
-                    itemCount: videosFiltrados.length,
-                    itemBuilder: (context, index) {
-                      final video = videosFiltrados[index];
-                      return RepaintBoundary(
-                        child: TarjetaVideo(
-                          video: video,
-                          alPresionar: () async {
-                            await PantallaReproductor.abrir(context, video);
-                            widget.alActualizar();
+                  child: _modoCuadricula
+                      ? LayoutBuilder(
+                          builder: (context, constraints) {
+                            final columnas = constraints.maxWidth >= 840
+                                ? 4
+                                : (constraints.maxWidth >= 540 ? 3 : 2);
+                            return GridView.builder(
+                              key: const PageStorageKey('grid_videos'),
+                              padding: const EdgeInsets.fromLTRB(14, 6, 14, 80),
+                              cacheExtent: 600,
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: columnas,
+                                    childAspectRatio: 0.84,
+                                    crossAxisSpacing: 10,
+                                    mainAxisSpacing: 10,
+                                  ),
+                              itemCount: videosFiltrados.length,
+                              itemBuilder: (context, index) {
+                                final video = videosFiltrados[index];
+                                return RepaintBoundary(
+                                  child: TarjetaVideoCuadricula(
+                                    video: video,
+                                    alPresionar: () async {
+                                      await PantallaReproductor.abrir(
+                                        context,
+                                        video,
+                                        listaReproduccion: videosFiltrados,
+                                        indiceInicial: index,
+                                      );
+                                      widget.alActualizar();
+                                    },
+                                    alAlternarFavorito: () {
+                                      widget.alActualizar();
+                                      _actualizarVideosVisibles();
+                                    },
+                                    alReiniciarProgreso: () {
+                                      widget.alActualizar();
+                                      _actualizarVideosVisibles();
+                                    },
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        )
+                      : ListView.builder(
+                          key: const PageStorageKey('lista_videos'),
+                          padding: const EdgeInsets.only(top: 4, bottom: 80),
+                          cacheExtent: 600,
+                          itemCount: videosFiltrados.length,
+                          itemBuilder: (context, index) {
+                            final video = videosFiltrados[index];
+                            return RepaintBoundary(
+                              child: TarjetaVideo(
+                                video: video,
+                                alPresionar: () async {
+                                  await PantallaReproductor.abrir(
+                                    context,
+                                    video,
+                                    listaReproduccion: videosFiltrados,
+                                    indiceInicial: index,
+                                  );
+                                  widget.alActualizar();
+                                  _actualizarVideosVisibles();
+                                },
+                                alAlternarFavorito: () {
+                                  widget.alActualizar();
+                                  _actualizarVideosVisibles();
+                                },
+                                alReiniciarProgreso: () {
+                                  widget.alActualizar();
+                                  _actualizarVideosVisibles();
+                                },
+                              ),
+                            );
                           },
                         ),
-                      );
-                    },
-                  ),
                 ),
         ),
       ],

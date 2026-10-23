@@ -51,7 +51,8 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
 
   /// Carga la ruta configurada en caché o '/storage/emulated/0/Movies'.
   Future<void> _cargarRutaConfigurada() async {
-    final rutaGuardada = await ServicioPreferencias.obtenerCarpetaRaizPersonalizada();
+    final rutaGuardada =
+        await ServicioPreferencias.obtenerCarpetaRaizPersonalizada();
     if (rutaGuardada != null && await Directory(rutaGuardada).exists()) {
       _rutaRaizPersonalizada = rutaGuardada;
       _navegarADirectorio(rutaGuardada, limpiarPila: true);
@@ -70,7 +71,10 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
   }
 
   /// Navega a un directorio específico y carga su contenido de forma asíncrona no bloqueante.
-  Future<void> _navegarADirectorio(String ruta, {bool limpiarPila = false}) async {
+  Future<void> _navegarADirectorio(
+    String ruta, {
+    bool limpiarPila = false,
+  }) async {
     setState(() {
       _estaCargandoDirectorio = true;
       _modoTodasLasCarpetas = false;
@@ -83,10 +87,11 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
       _rutaActualExploracion = ruta;
     });
 
-    final resultado = await ServicioAlmacenamientoVideo.explorarDirectorioJerarquico(
-      ruta,
-      mostrarOcultos: _mostrarCarpetasOcultas,
-    );
+    final resultado =
+        await ServicioAlmacenamientoVideo.explorarDirectorioJerarquico(
+          ruta,
+          mostrarOcultos: _mostrarCarpetasOcultas,
+        );
 
     if (mounted) {
       setState(() {
@@ -136,7 +141,8 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
 
   /// Abre el selector de directorios para que el usuario elija su carpeta personalizada.
   Future<void> _elegirNuevaCarpetaRaiz() async {
-    final nuevaRuta = await ServicioAlmacenamientoVideo.seleccionarCarpetaPersonalizada();
+    final nuevaRuta =
+        await ServicioAlmacenamientoVideo.seleccionarCarpetaPersonalizada();
     if (nuevaRuta != null && mounted) {
       setState(() {
         _rutaRaizPersonalizada = nuevaRuta;
@@ -157,7 +163,10 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
     }
 
     final ruta = _rutaActualExploracion!;
-    final partes = ruta.split(Platform.pathSeparator).where((p) => p.isNotEmpty).toList();
+    final partes = ruta
+        .split(Platform.pathSeparator)
+        .where((p) => p.isNotEmpty)
+        .toList();
 
     String acumulado = '';
     for (int i = 0; i < partes.length; i++) {
@@ -216,9 +225,7 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
         color: Color(0xFF0D1117),
-        border: Border(
-          bottom: BorderSide(color: Color(0xFF21262D), width: 1),
-        ),
+        border: Border(bottom: BorderSide(color: Color(0xFF21262D), width: 1)),
       ),
       child: Row(
         children: [
@@ -246,7 +253,10 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
                         _navegarADirectorio(seg.ruta);
                       },
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
                         child: Text(
                           segmentos[i].etiqueta,
                           style: TextStyle(
@@ -269,9 +279,15 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
 
           // Menú de opciones de la barra de migas
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded, color: Color(0xFF8B949E), size: 20),
+            icon: const Icon(
+              Icons.more_vert_rounded,
+              color: Color(0xFF8B949E),
+              size: 20,
+            ),
             color: ColoresApp.fondoTarjeta,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
             onSelected: (opcion) async {
               if (opcion == 'cambiar_raiz') {
                 _elegirNuevaCarpetaRaiz();
@@ -288,7 +304,10 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
                 });
               } else if (opcion == 'ir_raiz') {
                 if (_rutaRaizPersonalizada != null) {
-                  _navegarADirectorio(_rutaRaizPersonalizada!, limpiarPila: true);
+                  _navegarADirectorio(
+                    _rutaRaizPersonalizada!,
+                    limpiarPila: true,
+                  );
                 }
               }
             },
@@ -297,7 +316,11 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
                 value: 'cambiar_raiz',
                 child: Row(
                   children: [
-                    Icon(Icons.folder_open_rounded, color: ColoresApp.acentoPrimario, size: 18),
+                    Icon(
+                      Icons.folder_open_rounded,
+                      color: ColoresApp.acentoPrimario,
+                      size: 18,
+                    ),
                     SizedBox(width: 10),
                     Text('Elegir Carpeta Raíz'),
                   ],
@@ -308,12 +331,18 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
                 child: Row(
                   children: [
                     Icon(
-                      _mostrarCarpetasOcultas ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                      _mostrarCarpetasOcultas
+                          ? Icons.visibility_off_rounded
+                          : Icons.visibility_rounded,
                       color: Colors.white,
                       size: 18,
                     ),
                     const SizedBox(width: 10),
-                    Text(_mostrarCarpetasOcultas ? 'Ocultar archivos (.)' : 'Mostrar archivos (.)'),
+                    Text(
+                      _mostrarCarpetasOcultas
+                          ? 'Ocultar archivos (.)'
+                          : 'Mostrar archivos (.)',
+                    ),
                   ],
                 ),
               ),
@@ -332,7 +361,11 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
                 value: 'ver_todas',
                 child: Row(
                   children: [
-                    Icon(Icons.grid_view_rounded, color: ColoresApp.textoSecundario, size: 18),
+                    Icon(
+                      Icons.grid_view_rounded,
+                      color: ColoresApp.textoSecundario,
+                      size: 18,
+                    ),
                     SizedBox(width: 10),
                     Text('Ver Todas las Carpetas del Teléfono'),
                   ],
@@ -363,23 +396,43 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.folder_open_rounded, color: ColoresApp.textoSecundario, size: 48),
+              const Icon(
+                Icons.folder_open_rounded,
+                color: ColoresApp.textoSecundario,
+                size: 48,
+              ),
               const SizedBox(height: 16),
               const Text(
                 'Carpeta vacía',
-                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(height: 6),
               const Text(
                 'No se encontraron videos o subcarpetas aquí.',
-                style: TextStyle(color: ColoresApp.textoSecundario, fontSize: 13),
+                style: TextStyle(
+                  color: ColoresApp.textoSecundario,
+                  fontSize: 13,
+                ),
               ),
               const SizedBox(height: 18),
               if (_pilaNavegacionRutas.length > 1)
                 ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(backgroundColor: ColoresApp.fondoTarjeta),
-                  icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 18),
-                  label: const Text('Subir nivel', style: TextStyle(color: Colors.white)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: ColoresApp.fondoTarjeta,
+                  ),
+                  icon: const Icon(
+                    Icons.arrow_back_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                  label: const Text(
+                    'Subir nivel',
+                    style: TextStyle(color: Colors.white),
+                  ),
                   onPressed: _retrocederNivel,
                 ),
             ],
@@ -430,7 +483,18 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
                   child: TarjetaVideo(
                     video: video,
                     alPresionar: () async {
-                      await PantallaReproductor.abrir(context, video);
+                      await PantallaReproductor.abrir(
+                        context,
+                        video,
+                        listaReproduccion: videos,
+                        indiceInicial: index,
+                      );
+                      if (mounted) {
+                        setState(() {});
+                        widget.alActualizar();
+                      }
+                    },
+                    alAlternarFavorito: () {
                       if (mounted) {
                         setState(() {});
                         widget.alActualizar();
@@ -441,9 +505,7 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
               },
             ),
 
-          const SliverToBoxAdapter(
-            child: SizedBox(height: 80),
-          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 80)),
         ],
       ),
     );

@@ -20,7 +20,8 @@ class ModeloCarpetaVideo {
   int get cantidadVideos => videos.length;
 
   /// Cantidad total de videos a mostrar.
-  int get totalVideosMostrar => cantidadVideosTotal > 0 ? cantidadVideosTotal : videos.length;
+  int get totalVideosMostrar =>
+      cantidadVideosTotal > 0 ? cantidadVideosTotal : videos.length;
 
   /// Resumen visual de elementos estilo explorador (ej. "4 📁 • 1 📄" o "14 🎬").
   String get resumenElementos {

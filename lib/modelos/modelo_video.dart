@@ -14,6 +14,8 @@ class ModeloVideo {
   // Posición guardada en milisegundos (para reanudar reproducción)
   int posicionGuardadaMs;
   int duracionTotalMs;
+  bool esFavorito;
+  bool estaCompletado;
 
   ModeloVideo({
     required this.id,
@@ -26,6 +28,8 @@ class ModeloVideo {
     required this.extension,
     this.posicionGuardadaMs = 0,
     this.duracionTotalMs = 0,
+    this.esFavorito = false,
+    this.estaCompletado = false,
   });
 
   /// Crea un objeto ModeloVideo a partir de un archivo del sistema de archivos.
@@ -98,7 +102,8 @@ class ModeloVideo {
   }
 
   /// Indica si el video ya se empezó a reproducir pero no ha terminado.
-  bool get tieneProgreso => posicionGuardadaMs > 5000 && porcentajeVisto < 0.95;
+  bool get tieneProgreso =>
+      !estaCompletado && posicionGuardadaMs > 5000 && porcentajeVisto < 0.95;
 
   /// Formatea una duración en milisegundos a texto hh:mm:ss o mm:ss.
   static String formatearTiempo(int milisegundos) {
@@ -137,6 +142,8 @@ class ModeloVideo {
       'extension': extension,
       'posicionGuardadaMs': posicionGuardadaMs,
       'duracionTotalMs': duracionTotalMs,
+      'esFavorito': esFavorito,
+      'estaCompletado': estaCompletado,
     };
   }
 
@@ -155,6 +162,8 @@ class ModeloVideo {
       extension: mapa['extension'] as String? ?? '',
       posicionGuardadaMs: mapa['posicionGuardadaMs'] as int? ?? 0,
       duracionTotalMs: mapa['duracionTotalMs'] as int? ?? 0,
+      esFavorito: mapa['esFavorito'] as bool? ?? false,
+      estaCompletado: mapa['estaCompletado'] as bool? ?? false,
     );
   }
 }

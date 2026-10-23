@@ -25,6 +25,15 @@ class ServicioPreferencias {
     required int duracionTotalMs,
   }) async {
     final prefs = await _obtenerInstancia();
+    final completados = await obtenerCompletados();
+    if (completados.contains(rutaVideo)) {
+      completados.remove(rutaVideo);
+      await prefs.setString(
+        _prefClaveCompletados,
+        jsonEncode(completados.toList()),
+      );
+    }
+
     await Future.wait([
       prefs.setInt('pos_$rutaVideo', posicionMs),
       prefs.setInt('dur_$rutaVideo', duracionTotalMs),
@@ -50,6 +59,14 @@ class ServicioPreferencias {
   /// Borra el progreso guardado de un video específico.
   static Future<void> borrarProgresoVideo(String rutaVideo) async {
     final prefs = await _obtenerInstancia();
+    final completados = await obtenerCompletados();
+    if (completados.contains(rutaVideo)) {
+      completados.remove(rutaVideo);
+      await prefs.setString(
+        _prefClaveCompletados,
+        jsonEncode(completados.toList()),
+      );
+    }
     await Future.wait([
       prefs.remove('pos_$rutaVideo'),
       prefs.remove('dur_$rutaVideo'),
@@ -104,7 +121,13 @@ class ServicioPreferencias {
   ) async {
     if (videos.isEmpty) return;
     final prefs = await _obtenerInstancia();
+    final completados = await obtenerCompletados();
+    final favoritos = await obtenerFavoritos();
+
     for (final video in videos) {
+      video.estaCompletado = completados.contains(video.ruta);
+      video.esFavorito = favoritos.contains(video.ruta);
+
       final pos = prefs.getInt('pos_${video.ruta}');
       if (pos != null && pos > 0) {
         video.posicionGuardadaMs = pos;
@@ -156,5 +179,197 @@ class ServicioPreferencias {
   static Future<void> borrarCarpetaRaizPersonalizada() async {
     final prefs = await _obtenerInstancia();
     await prefs.remove(_prefClaveCarpetaRaiz);
+  }
+
+  // ===================== SISTEMA DE FAVORITOS =====================
+  static const String _prefClaveFavoritos = 'videos_favoritos_v1';
+
+  /// Obtiene el conjunto de rutas de videos favoritos.
+  static Future<Set<String>> obtenerFavoritos() async {
+    final prefs = await _obtenerInstancia();
+    final jsonStr = prefs.getString(_prefClaveFavoritos);
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final dec = jsonDecode(jsonStr);
+        if (dec is List) {
+          return dec.map((e) => e.toString()).toSet();
+        }
+      } catch (_) {}
+    }
+    return <String>{};
+  }
+
+  /// Alterna el estado de favorito de un video y retorna el nuevo estado.
+  static Future<bool> alternarFavorito(String rutaVideo) async {
+    final prefs = await _obtenerInstancia();
+    final favoritos = await obtenerFavoritos();
+    final nuevoEstado = !favoritos.contains(rutaVideo);
+    if (nuevoEstado) {
+      favoritos.add(rutaVideo);
+    } else {
+      favoritos.remove(rutaVideo);
+    }
+    await prefs.setString(_prefClaveFavoritos, jsonEncode(favoritos.toList()));
+    return nuevoEstado;
+  }
+
+  /// Verifica si un video es favorito.
+  static Future<bool> esFavorito(String rutaVideo) async {
+    final favoritos = await obtenerFavoritos();
+    return favoritos.contains(rutaVideo);
+  }
+
+  // ===================== SISTEMA DE COMPLETADOS / VISTOS =====================
+  static const String _prefClaveCompletados = 'videos_completados_v1';
+
+  /// Obtiene el conjunto de rutas de videos completados (vistos en su totalidad).
+  static Future<Set<String>> obtenerCompletados() async {
+    final prefs = await _obtenerInstancia();
+    final jsonStr = prefs.getString(_prefClaveCompletados);
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final dec = jsonDecode(jsonStr);
+        if (dec is List) {
+          return dec.map((e) => e.toString()).toSet();
+        }
+      } catch (_) {}
+    }
+    return <String>{};
+  }
+
+  /// Marca un video como completado (o no completado) y limpia su posición guardada.
+  static Future<void> marcarVideoCompletado(
+    String rutaVideo, {
+    int? duracionTotalMs,
+    bool completado = true,
+  }) async {
+    final prefs = await _obtenerInstancia();
+    final completados = await obtenerCompletados();
+    if (completado) {
+      completados.add(rutaVideo);
+      await prefs.remove('pos_$rutaVideo');
+      if (duracionTotalMs != null && duracionTotalMs > 0) {
+        await prefs.setInt('dur_$rutaVideo', duracionTotalMs);
+      }
+    } else {
+      completados.remove(rutaVideo);
+    }
+    await prefs.setString(
+      _prefClaveCompletados,
+      jsonEncode(completados.toList()),
+    );
+  }
+
+  /// Verifica si un video ha sido completado.
+  static Future<bool> esVideoCompletado(String rutaVideo) async {
+    final completados = await obtenerCompletados();
+    return completados.contains(rutaVideo);
+  }
+
+  /// Alterna el estado de completado de un video y retorna el nuevo estado.
+  static Future<bool> alternarCompletado(
+    String rutaVideo, {
+    int? duracionTotalMs,
+  }) async {
+    final completados = await obtenerCompletados();
+    final nuevoEstado = !completados.contains(rutaVideo);
+    await marcarVideoCompletado(
+      rutaVideo,
+      duracionTotalMs: duracionTotalMs,
+      completado: nuevoEstado,
+    );
+    return nuevoEstado;
+  }
+
+  // ===================== CACHÉ INSTANTÁNEA DE BIBLIOTECA (< 50ms) =====================
+  static const String _prefClaveCacheBiblioteca = 'cache_biblioteca_videos_v1';
+
+  /// Guarda en disco la lista de videos escaneados para arranque instantáneo.
+  static Future<void> guardarCacheBiblioteca(List<ModeloVideo> videos) async {
+    if (videos.isEmpty) return;
+    try {
+      final prefs = await _obtenerInstancia();
+      final listaMapas = videos.map((v) => v.aMapa()).toList();
+      await prefs.setString(_prefClaveCacheBiblioteca, jsonEncode(listaMapas));
+    } catch (_) {}
+  }
+
+  /// Obtiene de forma instantánea la biblioteca guardada previamente.
+  static Future<List<ModeloVideo>> obtenerCacheBiblioteca() async {
+    try {
+      final prefs = await _obtenerInstancia();
+      final jsonStr = prefs.getString(_prefClaveCacheBiblioteca);
+      if (jsonStr != null && jsonStr.isNotEmpty) {
+        final dec = jsonDecode(jsonStr);
+        if (dec is List) {
+          final favoritos = await obtenerFavoritos();
+          final completados = await obtenerCompletados();
+          return dec.map((item) {
+            final video = ModeloVideo.desdeMapa(item as Map<String, dynamic>);
+            video.esFavorito = favoritos.contains(video.ruta);
+            video.estaCompletado =
+                completados.contains(video.ruta) || video.estaCompletado;
+            return video;
+          }).toList();
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  // ===================== MODO DE VISTA (LISTA / CUADRÍCULA) =====================
+  static const String _prefClaveModoCuadricula = 'modo_vista_cuadricula_v1';
+
+  /// Guarda la preferencia de vista (true = cuadrícula, false = lista compacta).
+  static Future<void> guardarModoVistaCuadricula(bool esCuadricula) async {
+    final prefs = await _obtenerInstancia();
+    await prefs.setBool(_prefClaveModoCuadricula, esCuadricula);
+  }
+
+  /// Obtiene la preferencia de vista (por defecto false = lista compacta).
+  static Future<bool> obtenerModoVistaCuadricula() async {
+    final prefs = await _obtenerInstancia();
+    return prefs.getBool(_prefClaveModoCuadricula) ?? false;
+  }
+
+  // ===================== SINCRONIZACIÓN DE SUBTÍTULOS Y AUDIO =====================
+  static const String _prefClaveDesfaseSubtitulos =
+      'desfase_subtitulos_segundos';
+  static const String _prefClaveDesfaseAudio = 'desfase_audio_segundos';
+
+  static Future<void> guardarDesfaseSubtitulos(double segundos) async {
+    final prefs = await _obtenerInstancia();
+    await prefs.setDouble(_prefClaveDesfaseSubtitulos, segundos);
+  }
+
+  static Future<double> obtenerDesfaseSubtitulos() async {
+    final prefs = await _obtenerInstancia();
+    return prefs.getDouble(_prefClaveDesfaseSubtitulos) ?? 0.0;
+  }
+
+  static Future<void> guardarDesfaseAudio(double segundos) async {
+    final prefs = await _obtenerInstancia();
+    await prefs.setDouble(_prefClaveDesfaseAudio, segundos);
+  }
+
+  static Future<double> obtenerDesfaseAudio() async {
+    final prefs = await _obtenerInstancia();
+    return prefs.getDouble(_prefClaveDesfaseAudio) ?? 0.0;
+  }
+
+  // ===================== REPRODUCCIÓN AUTOMÁTICA (AUTOPLAY SIGUIENTE VIDEO) =====================
+  static const String _prefClaveReproduccionAutomatica =
+      'reproduccion_automatica_v1';
+
+  /// Guarda la preferencia de reproducción automática del siguiente video (por defecto true).
+  static Future<void> guardarReproduccionAutomatica(bool activa) async {
+    final prefs = await _obtenerInstancia();
+    await prefs.setBool(_prefClaveReproduccionAutomatica, activa);
+  }
+
+  /// Obtiene si la reproducción automática está activa (true por defecto).
+  static Future<bool> obtenerReproduccionAutomatica() async {
+    final prefs = await _obtenerInstancia();
+    return prefs.getBool(_prefClaveReproduccionAutomatica) ?? true;
   }
 }

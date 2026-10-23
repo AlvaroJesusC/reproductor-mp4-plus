@@ -5,6 +5,7 @@ import '../modelos/modelo_carpeta_video.dart';
 import '../modelos/modelo_video.dart';
 import '../servicios/servicio_almacenamiento_video.dart';
 import '../servicios/servicio_permisos.dart';
+import '../servicios/servicio_preferencias.dart';
 import 'pantalla_reproductor.dart';
 import 'pestanas/pestana_carpetas.dart';
 import 'pestanas/pestana_recientes.dart';
@@ -42,7 +43,22 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   }
 
   Future<void> _verificarPermisosYRecargar() async {
-    if (mounted) {
+    // 1. Cargar caché instantáneo (< 50ms) para que la pantalla NUNCA se quede en blanco
+    final videosEnCache = await ServicioPreferencias.obtenerCacheBiblioteca();
+    if (videosEnCache.isNotEmpty && mounted) {
+      final carpetasEnCache =
+          ServicioAlmacenamientoVideo.agruparVideosPorCarpeta(videosEnCache);
+      final recientesEnCache =
+          await ServicioAlmacenamientoVideo.obtenerVideosContinuarViendo(
+            videosEnCache,
+          );
+      setState(() {
+        _todosLosVideos = videosEnCache;
+        _carpetasVideos = carpetasEnCache;
+        _videosRecientes = recientesEnCache;
+        _estaCargando = false;
+      });
+    } else if (mounted) {
       setState(() {
         _estaCargando = true;
       });
@@ -69,7 +85,7 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
     }
   }
 
-  /// Escaneo completo de almacenamiento (solo se ejecuta al inicio o al hacer pull-to-refresh manual).
+  /// Escaneo completo de almacenamiento (actualiza en background si ya había caché).
   Future<void> _cargarVideos({bool forzarLimpiezaCache = false}) async {
     if (_estaActualizando) return;
 
@@ -109,9 +125,10 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
     }
   }
 
-  /// Actualización instantánea en memoria sin pantalla de carga (se usa al salir de un video).
+  /// Actualización instantánea en memoria sin pantalla de carga (se usa al salir de un video o cambiar favoritos/completados).
   Future<void> _actualizarProgresoEnMemoria() async {
     try {
+      await ServicioPreferencias.enriquecerVideosConProgreso(_todosLosVideos);
       final recientes =
           await ServicioAlmacenamientoVideo.obtenerVideosContinuarViendo(
             _todosLosVideos,
@@ -127,7 +144,12 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   Future<void> _abrirSelectorManual() async {
     final video = await ServicioAlmacenamientoVideo.seleccionarVideoManual();
     if (video != null && mounted) {
-      await PantallaReproductor.abrir(context, video);
+      await PantallaReproductor.abrir(
+        context,
+        video,
+        listaReproduccion: [video],
+        indiceInicial: 0,
+      );
       _actualizarProgresoEnMemoria();
     }
   }

@@ -156,8 +156,12 @@ class ServicioAlmacenamientoVideo {
       (a, b) => a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase()),
     );
 
-    // Cargar progreso de reproducción de los videos directos
+    // Cargar progreso de reproducción y favoritos de los videos directos
     await ServicioPreferencias.enriquecerVideosConProgreso(videosDirectos);
+    final favoritos = await ServicioPreferencias.obtenerFavoritos();
+    for (final v in videosDirectos) {
+      v.esFavorito = favoritos.contains(v.ruta);
+    }
 
     return ResultadoExploracionDirectorio(
       rutaActual: rutaDirectorio,
@@ -251,6 +255,13 @@ class ServicioAlmacenamientoVideo {
     );
 
     await ServicioPreferencias.enriquecerVideosConProgreso(listaResultado);
+    final favoritos = await ServicioPreferencias.obtenerFavoritos();
+    for (final v in listaResultado) {
+      v.esFavorito = favoritos.contains(v.ruta);
+    }
+
+    // Persistir en caché para arranque ultrarrápido (< 50ms)
+    await ServicioPreferencias.guardarCacheBiblioteca(listaResultado);
 
     return listaResultado;
   }
@@ -381,5 +392,44 @@ class ServicioAlmacenamientoVideo {
     }
 
     return resultado;
+  }
+
+  /// Busca archivos de subtítulos compañeros en el mismo directorio del video (.srt, .vtt, .ass).
+  static Future<List<File>> buscarSubtitulosLocales(String rutaVideo) async {
+    final List<File> subtitulos = [];
+    try {
+      final archivoVideo = File(rutaVideo);
+      final dir = archivoVideo.parent;
+      if (!await dir.exists()) return subtitulos;
+
+      final nombreBase = archivoVideo.path.split(Platform.pathSeparator).last;
+      final punto = nombreBase.lastIndexOf('.');
+      final nombreSinExt = punto != -1
+          ? nombreBase.substring(0, punto).toLowerCase()
+          : nombreBase.toLowerCase();
+
+      final extensionesSub = {'srt', 'vtt', 'ass', 'sub'};
+
+      await for (final entidad in dir.list(followLinks: false)) {
+        if (entidad is File) {
+          final nombreEnt = entidad.path.split(Platform.pathSeparator).last;
+          final puntoSub = nombreEnt.lastIndexOf('.');
+          if (puntoSub != -1) {
+            final ext = nombreEnt.substring(puntoSub + 1).toLowerCase();
+            if (extensionesSub.contains(ext)) {
+              final nombreSubSinExt = nombreEnt
+                  .substring(0, puntoSub)
+                  .toLowerCase();
+              // Coincidencia exacta o contiene el nombre base del video
+              if (nombreSubSinExt.contains(nombreSinExt) ||
+                  nombreSinExt.contains(nombreSubSinExt)) {
+                subtitulos.add(entidad);
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return subtitulos;
   }
 }

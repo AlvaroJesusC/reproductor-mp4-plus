@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:volume_controller/volume_controller.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -11,66 +13,65 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../constantes/colores_app.dart';
 import '../modelos/modelo_opciones_reproduccion.dart';
 import '../modelos/modelo_video.dart';
+import '../servicios/servicio_almacenamiento_video.dart';
 import '../servicios/servicio_preferencias.dart';
+import '../widgets/dialogo_informacion_video.dart';
 import '../widgets/reproductor/controles_reproductor.dart';
+import '../widgets/reproductor/hoja_playlist_reproductor.dart';
 import '../widgets/reproductor/indicador_gesto_osd.dart';
 import '../widgets/reproductor/modal_aspecto.dart';
 import '../widgets/reproductor/modal_pistas_audio_subtitulos.dart';
+import '../widgets/reproductor/modal_sincronizacion_pistas.dart';
+import '../widgets/reproductor/modal_temporizador_apagado.dart';
 import '../widgets/reproductor/modal_velocidad.dart';
-
-class _EstadoInterfazReproductor {
-  final bool reproduciendo;
-  final bool cargando;
-  final int posicionMs;
-  final int duracionMs;
-  final int bufferMs;
-
-  const _EstadoInterfazReproductor({
-    this.reproduciendo = false,
-    this.cargando = false,
-    this.posicionMs = 0,
-    this.duracionMs = 0,
-    this.bufferMs = 0,
-  });
-
-  _EstadoInterfazReproductor copiarCon({
-    bool? reproduciendo,
-    bool? cargando,
-    int? posicionMs,
-    int? duracionMs,
-    int? bufferMs,
-  }) {
-    return _EstadoInterfazReproductor(
-      reproduciendo: reproduciendo ?? this.reproduciendo,
-      cargando: cargando ?? this.cargando,
-      posicionMs: posicionMs ?? this.posicionMs,
-      duracionMs: duracionMs ?? this.duracionMs,
-      bufferMs: bufferMs ?? this.bufferMs,
-    );
-  }
-}
+import '../widgets/reproductor/overlay_reproduccion_automatica.dart';
 
 /// Pantalla del reproductor de video con soporte universal y transición suave sin distorsión al salir.
 class PantallaReproductor extends StatefulWidget {
   final ModeloVideo video;
+  final List<ModeloVideo>? listaReproduccion;
+  final int? indiceInicial;
 
-  const PantallaReproductor({super.key, required this.video});
+  const PantallaReproductor({
+    super.key,
+    required this.video,
+    this.listaReproduccion,
+    this.indiceInicial,
+  });
 
-  /// Abre la pantalla del reproductor con transición suave de desvanecimiento (evita distorsión de rotación).
-  static Future<void> abrir(BuildContext context, ModeloVideo video) {
-    return Navigator.of(context).push(
+  /// Abre el reproductor y restaura la interfaz después de revelar la biblioteca.
+  static Future<void> abrir(
+    BuildContext context,
+    ModeloVideo video, {
+    List<ModeloVideo>? listaReproduccion,
+    int? indiceInicial,
+  }) async {
+    await Navigator.of(context).push<void>(
       PageRouteBuilder(
         opaque: true,
         pageBuilder: (context, animation, secondaryAnimation) =>
-            PantallaReproductor(video: video),
+            PantallaReproductor(
+              video: video,
+              listaReproduccion: listaReproduccion,
+              indiceInicial: indiceInicial,
+            ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(opacity: animation, child: child);
         },
         transitionDuration: const Duration(milliseconds: 180),
-        // Al regresar no se mezcla la pantalla horizontal con la principal.
+        // Al regresar no se mezcla la superficie nativa con la biblioteca.
         reverseTransitionDuration: Duration.zero,
       ),
     );
+
+    if (!context.mounted) return;
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+
+    // El primer frame pertenece completamente a la biblioteca. Solo después se
+    // solicita el giro para que sea ella, y no el reproductor, quien se adapte.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!context.mounted) return;
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   }
 
   @override
@@ -82,9 +83,22 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   late final Player _reproductor;
   late final VideoController _controladorVideo;
   final List<StreamSubscription> _suscripciones = [];
-  final ValueNotifier<_EstadoInterfazReproductor> _estadoInterfaz =
-      ValueNotifier(const _EstadoInterfazReproductor());
+  final ValueNotifier<EstadoProgresoReproductor> _estadoProgreso =
+      ValueNotifier(const EstadoProgresoReproductor());
+  final ValueNotifier<EstadoReproduccionVideo> _estadoReproduccion =
+      ValueNotifier(const EstadoReproduccionVideo());
+  final ValueNotifier<int> _segundosRestantesAutoplayNotifier = ValueNotifier(
+    5,
+  );
   final ValueNotifier<int> _versionOSD = ValueNotifier(0);
+
+  /// Control reactivo de la opacidad del filtro de atenuación nocturna (sub-cero).
+  final ValueNotifier<double> _opacidadFiltroNoche = ValueNotifier(0.0);
+
+  // Video actual y playlist
+  late ModeloVideo _videoActual;
+  late List<ModeloVideo> _playlist;
+  late int _indiceActual;
 
   bool _reproductorCreado = false;
   bool _estaInicializado = false;
@@ -93,18 +107,40 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   bool _reintentadoConSoftware = false;
   bool _estaSaliendo = false;
 
+  // Reproducción automática del siguiente video (Autoplay estilo YouTube)
+  bool _reproduccionAutomatica = true;
+  bool _mostrandoCuentaRegresivaAutoplay = false;
+  Timer? _temporizadorAutoplay;
+  ModeloVideo? _siguienteVideoAutoplay;
+
   // Estado de interfaz
   bool _mostrarControles = true;
   bool _pantallaBloqueada = false;
+  bool _mostrarBotonDesbloqueo = false;
   Timer? _temporizadorOcultarControles;
-  bool _esHorizontal = true;
+  Timer? _temporizadorOcultarBotonDesbloqueo;
+  bool _estaEnHorizontal = false;
 
   // Opciones de reproducción
   double _velocidadActual = 1.0;
   ModoRelacionAspecto _aspectoActual = ModoRelacionAspecto.ajustar;
 
+  // Sincronización y retardo
+  double _desfaseSubtitulosSegundos = 0.0;
+  double _desfaseAudioSegundos = 0.0;
+
+  // Temporizador de apagado
+  Timer? _temporizadorApagadoTimer;
+  int? _segundosRestantesApagado;
+  bool _apagarAlTerminarVideo = false;
+
+  // Bucle A-B
+  int? _buclePuntoA;
+  int? _buclePuntoB;
+
   // Estado de gestos táctiles (OSD)
   TipoGestoOSD _tipoGestoActual = TipoGestoOSD.ninguno;
+  // Brillo virtual: 0.0 a 1.0 controla hardware; <0.0 activa atenuación extra por software (Modo Noche)
   double _valorBrilloActual = 0.5;
   double _valorVolumenActual = 0.5;
 
@@ -128,17 +164,39 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _videoActual = widget.video;
+    _playlist =
+        widget.listaReproduccion != null && widget.listaReproduccion!.isNotEmpty
+        ? List<ModeloVideo>.from(widget.listaReproduccion!)
+        : [widget.video];
+    _indiceActual =
+        widget.indiceInicial ??
+        _playlist.indexWhere((v) => v.ruta == widget.video.ruta);
+    if (_indiceActual < 0) _indiceActual = 0;
+
+    ServicioPreferencias.obtenerReproduccionAutomatica().then((activa) {
+      if (mounted) {
+        setState(() {
+          _reproduccionAutomatica = activa;
+        });
+      }
+    });
+
     _configurarModoInmersivo();
     _inicializarBrilloYVolumen();
     _inicializarMotorReproduccion();
   }
 
-  /// Configura pantalla completa inmersiva y rotación horizontal.
+  /// Configura pantalla completa inmersiva permitiendo orientación natural.
   Future<void> _configurarModoInmersivo() async {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // Orientación libre al abrir: el reproductor se adapta a cualquier posición
+    // en que se sostenga el teléfono (vertical u horizontal) y rota con los sensores.
     await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
+      DeviceOrientation.portraitDown,
     ]);
     await WakelockPlus.enable();
   }
@@ -150,6 +208,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     } catch (_) {
       _valorBrilloActual = 0.5;
     }
+    _opacidadFiltroNoche.value = 0.0;
 
     try {
       _valorVolumenActual = await _controladorVolumen.getVolume();
@@ -162,15 +221,6 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   /// Inicializa el motor multimedia basado en libmpv con fallback automático.
   Future<void> _inicializarMotorReproduccion() async {
     try {
-      final archivo = File(widget.video.ruta);
-      if (!await archivo.exists()) {
-        setState(() {
-          _tieneError = true;
-          _mensajeError = 'El archivo de video no existe o no se puede leer.';
-        });
-        return;
-      }
-
       _reproductor = Player(
         configuration: const PlayerConfiguration(bufferSize: 32 * 1024 * 1024),
       );
@@ -198,12 +248,56 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       _velocidadActual = await ServicioPreferencias.obtenerVelocidadPreferida();
       await _reproductor.setRate(_velocidadActual);
 
+      _desfaseSubtitulosSegundos =
+          await ServicioPreferencias.obtenerDesfaseSubtitulos();
+      _desfaseAudioSegundos = await ServicioPreferencias.obtenerDesfaseAudio();
+
+      await _cargarYReproducirVideo();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _tieneError = true;
+        _mensajeError = 'Error al inicializar el reproductor: $e';
+      });
+    }
+  }
+
+  Future<void> _cargarYReproducirVideo() async {
+    try {
+      final archivo = File(_videoActual.ruta);
+      if (!await archivo.exists()) {
+        setState(() {
+          _tieneError = true;
+          _mensajeError = 'El archivo de video no existe o no se puede leer.';
+        });
+        return;
+      }
+
+      // Aplicar retardos de subtítulos y audio
+      try {
+        final dynamic platform = _reproductor.platform;
+        if (platform != null) {
+          if (_desfaseSubtitulosSegundos != 0.0) {
+            await platform.setProperty(
+              'sub-delay',
+              _desfaseSubtitulosSegundos.toStringAsFixed(3),
+            );
+          }
+          if (_desfaseAudioSegundos != 0.0) {
+            await platform.setProperty(
+              'audio-delay',
+              _desfaseAudioSegundos.toStringAsFixed(3),
+            );
+          }
+        }
+      } catch (_) {}
+
       // Leer el progreso antes de abrir el medio. Así los eventos iniciales en
       // posición cero no pueden reemplazar el punto que se debe restaurar.
-      final posicionGuardada = widget.video.posicionGuardadaMs > 5000
-          ? widget.video.posicionGuardadaMs
+      final posicionGuardada = _videoActual.posicionGuardadaMs > 5000
+          ? _videoActual.posicionGuardadaMs
           : await ServicioPreferencias.obtenerPosicionGuardada(
-              widget.video.ruta,
+              _videoActual.ruta,
             );
 
       // 1. Escuchar posición
@@ -213,10 +307,24 @@ class _PantallaReproductorState extends State<PantallaReproductor>
           final posMs = pos.inMilliseconds;
           final durMs = _reproductor.state.duration.inMilliseconds;
 
+          // Bucle A-B activo
+          if (_buclePuntoA != null && _buclePuntoB != null) {
+            if (posMs >= _buclePuntoB!) {
+              _reproductor.seek(Duration(milliseconds: _buclePuntoA!));
+              return;
+            }
+          }
+
           final videoCompletado = _esVideoCompletado(posMs, durMs);
           if (_reanudacionAplicada) {
-            widget.video.posicionGuardadaMs = videoCompletado ? 0 : posMs;
-            widget.video.duracionTotalMs = durMs;
+            if (videoCompletado) {
+              _videoActual.estaCompletado = true;
+              _videoActual.posicionGuardadaMs = 0;
+            } else {
+              _videoActual.estaCompletado = false;
+              _videoActual.posicionGuardadaMs = posMs;
+            }
+            _videoActual.duracionTotalMs = durMs;
             if (!videoCompletado) {
               _progresoFinalizadoLimpiado = false;
             }
@@ -226,7 +334,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             if ((posMs - _ultimaPosicionMs).abs() >= 450 ||
                 !_reproductor.state.playing) {
               _ultimaPosicionMs = posMs;
-              _actualizarEstadoInterfaz(
+              _actualizarProgreso(
                 posicionMs: posMs,
                 duracionMs: durMs,
                 bufferMs: _reproductor.state.buffer.inMilliseconds,
@@ -243,11 +351,16 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             if (videoCompletado) {
               if (!_progresoFinalizadoLimpiado) {
                 _progresoFinalizadoLimpiado = true;
-                ServicioPreferencias.borrarProgresoVideo(widget.video.ruta);
+                _videoActual.estaCompletado = true;
+                ServicioPreferencias.marcarVideoCompletado(
+                  _videoActual.ruta,
+                  duracionTotalMs: durMs,
+                  completado: true,
+                );
               }
             } else {
               ServicioPreferencias.guardarProgresoVideo(
-                rutaVideo: widget.video.ruta,
+                rutaVideo: _videoActual.ruta,
                 posicionMs: posMs,
                 duracionTotalMs: durMs,
               );
@@ -256,11 +369,37 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         }),
       );
 
-      // 2. Escuchar estado de reproducción
+      // 2. Escuchar fin de video y estado de reproducción
+      _suscripciones.add(
+        _reproductor.stream.completed.listen((completado) {
+          if (!mounted || _estaSaliendo || !completado) return;
+          final durMs = _reproductor.state.duration.inMilliseconds;
+          _videoActual.estaCompletado = true;
+          _videoActual.posicionGuardadaMs = 0;
+          _progresoFinalizadoLimpiado = true;
+          ServicioPreferencias.marcarVideoCompletado(
+            _videoActual.ruta,
+            duracionTotalMs: durMs,
+            completado: true,
+          );
+          if (_apagarAlTerminarVideo) {
+            _manejarSalida();
+            return;
+          }
+          if (_indiceActual < _playlist.length - 1) {
+            if (_reproduccionAutomatica) {
+              _iniciarCuentaRegresivaAutoplay();
+            } else {
+              _actualizarReproduccion(reproduciendo: false);
+            }
+          }
+        }),
+      );
+
       _suscripciones.add(
         _reproductor.stream.playing.listen((reproduciendo) {
           if (mounted && !_estaSaliendo) {
-            _actualizarEstadoInterfaz(reproduciendo: reproduciendo);
+            _actualizarReproduccion(reproduciendo: reproduciendo);
           }
         }),
       );
@@ -269,7 +408,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       _suscripciones.add(
         _reproductor.stream.buffering.listen((cargando) {
           if (mounted && !_estaSaliendo) {
-            _actualizarEstadoInterfaz(cargando: cargando);
+            _actualizarReproduccion(cargando: cargando);
           }
         }),
       );
@@ -278,8 +417,8 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       _suscripciones.add(
         _reproductor.stream.duration.listen((dur) {
           if (mounted && dur > Duration.zero && !_estaSaliendo) {
-            widget.video.duracionTotalMs = dur.inMilliseconds;
-            _actualizarEstadoInterfaz(duracionMs: dur.inMilliseconds);
+            _videoActual.duracionTotalMs = dur.inMilliseconds;
+            _actualizarProgreso(duracionMs: dur.inMilliseconds);
           }
         }),
       );
@@ -300,7 +439,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
               if (platform != null) {
                 await platform.setProperty('hwdec', 'no');
               }
-              await _reproductor.open(Media(widget.video.ruta), play: true);
+              await _reproductor.open(Media(_videoActual.ruta), play: true);
               return;
             } catch (_) {}
           }
@@ -313,7 +452,11 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       );
 
       // Abrir pausado, esperar sus metadatos y restaurar antes de reproducir.
-      await _reproductor.open(Media(widget.video.ruta), play: false);
+      await _reproductor.open(Media(_videoActual.ruta), play: false);
+
+      // Cargar subtítulos locales automáticamente si existen
+      unawaited(_buscarYCargarSubtitulosLocales());
+
       final objetivoReanudacionMs = await _aplicarReanudacionInicial(
         posicionGuardada,
       );
@@ -324,13 +467,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       await _reproductor.play();
 
       if (!mounted) return;
-      _actualizarEstadoInterfaz(
-        reproduciendo: _reproductor.state.playing,
-        cargando: _reproductor.state.buffering,
-        posicionMs: _reproductor.state.position.inMilliseconds,
-        duracionMs: _reproductor.state.duration.inMilliseconds,
-        bufferMs: _reproductor.state.buffer.inMilliseconds,
-      );
+      _sincronizarEstadoInterfaz();
       setState(() {
         _estaInicializado = true;
       });
@@ -384,7 +521,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
     if (!mounted || _estaSaliendo) return;
     _reanudacionAplicada = true;
-    widget.video.posicionGuardadaMs = objetivoMs;
+    _videoActual.posicionGuardadaMs = objetivoMs;
     _ultimoGuardadoTimestamp = DateTime.now().millisecondsSinceEpoch;
     _sincronizarEstadoInterfaz();
   }
@@ -410,88 +547,78 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     final posMs = _reproductor.state.position.inMilliseconds;
     final durMs = _reproductor.state.duration.inMilliseconds;
     if (_esVideoCompletado(posMs, durMs)) {
-      widget.video.posicionGuardadaMs = 0;
+      _videoActual.posicionGuardadaMs = 0;
+      _videoActual.estaCompletado = true;
       _progresoFinalizadoLimpiado = true;
-      await ServicioPreferencias.borrarProgresoVideo(widget.video.ruta);
+      await ServicioPreferencias.marcarVideoCompletado(
+        _videoActual.ruta,
+        duracionTotalMs: durMs,
+        completado: true,
+      );
       return;
     }
 
-    await ServicioPreferencias.guardarProgresoVideo(
-      rutaVideo: widget.video.ruta,
-      posicionMs: posMs,
-      duracionTotalMs: durMs,
-    );
+    if (posMs > 5000) {
+      _videoActual.posicionGuardadaMs = posMs;
+      _videoActual.duracionTotalMs = durMs;
+      _videoActual.estaCompletado = false;
+      await ServicioPreferencias.guardarProgresoVideo(
+        rutaVideo: _videoActual.ruta,
+        posicionMs: posMs,
+        duracionTotalMs: durMs,
+      );
+    }
   }
 
-  /// Sale sin exponer la interfaz horizontal durante la rotación a vertical.
-  Future<void> _manejarSalida() async {
+  /// Regresa inmediatamente y deja que la biblioteca absorba la rotación.
+  void _manejarSalida() {
     if (_estaSaliendo) return;
+    _estaSaliendo = true;
+    _cancelarCuentaRegresivaAutoplay();
 
-    // Cubrir primero la superficie nativa del video. Esperar un frame garantiza
-    // que Android rote una pantalla negra y no comprima visualmente la UI.
-    setState(() {
-      _estaSaliendo = true;
-    });
-    await WidgetsBinding.instance.endOfFrame;
-
+    // La posición y duración se capturan antes del primer await del guardado.
+    // La escritura continúa en segundo plano sin retrasar el cierre de la ruta.
     if (_estaInicializado) {
-      // El progreso captura posición y duración antes de su primer await, por lo
-      // que puede persistirse sin bloquear el regreso a la biblioteca.
       unawaited(_guardarProgresoInmediato());
-      unawaited(_reproductor.pause());
     }
 
     try {
       unawaited(ScreenBrightness.instance.resetApplicationScreenBrightness());
     } catch (_) {}
     unawaited(WakelockPlus.disable());
-
-    await Future.wait([
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge),
+    unawaited(
       SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
-    ]);
+    );
 
-    // La llamada anterior confirma la solicitud, no necesariamente que Android
-    // haya terminado la animación física. Esperar unos frames evita el estirado.
-    await _esperarVistaVertical();
-
-    if (mounted) {
-      Navigator.of(context).pop();
-    }
+    // Cerrar en este mismo frame. `abrir` restaurará barras y orientación
+    // después de que la biblioteca vuelva a estar completamente visible.
+    Navigator.of(context).pop();
   }
 
-  Future<void> _esperarVistaVertical() async {
-    const maximoFrames = 24;
-    for (var frame = 0; frame < maximoFrames; frame++) {
-      if (!mounted) return;
-      final tamanoFisico = View.of(context).physicalSize;
-      if (tamanoFisico.height >= tamanoFisico.width) return;
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-    }
-  }
-
-  void _actualizarEstadoInterfaz({
-    bool? reproduciendo,
-    bool? cargando,
-    int? posicionMs,
-    int? duracionMs,
-    int? bufferMs,
-  }) {
+  void _actualizarProgreso({int? posicionMs, int? duracionMs, int? bufferMs}) {
     if (!mounted || _estaSaliendo) return;
-    _estadoInterfaz.value = _estadoInterfaz.value.copiarCon(
-      reproduciendo: reproduciendo,
-      cargando: cargando,
+    _estadoProgreso.value = _estadoProgreso.value.copiarCon(
       posicionMs: posicionMs,
       duracionMs: duracionMs,
       bufferMs: bufferMs,
     );
   }
 
+  void _actualizarReproduccion({bool? reproduciendo, bool? cargando}) {
+    if (!mounted || _estaSaliendo) return;
+    _estadoReproduccion.value = _estadoReproduccion.value.copiarCon(
+      reproduciendo: reproduciendo,
+      cargando: cargando,
+    );
+  }
+
   void _sincronizarEstadoInterfaz() {
     if (!_reproductorCreado) return;
-    _actualizarEstadoInterfaz(
+    _actualizarReproduccion(
       reproduciendo: _reproductor.state.playing,
       cargando: _reproductor.state.buffering,
+    );
+    _actualizarProgreso(
       posicionMs: _reproductor.state.position.inMilliseconds,
       duracionMs: _reproductor.state.duration.inMilliseconds,
       bufferMs: _reproductor.state.buffer.inMilliseconds,
@@ -540,7 +667,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     final duracionMs = _reproductor.state.duration.inMilliseconds;
     final objetivoMs = (ratio * duracionMs).round();
     _posicionSeekArrastreMs = objetivoMs;
-    _actualizarEstadoInterfaz(posicionMs: objetivoMs);
+    _actualizarProgreso(posicionMs: objetivoMs);
   }
 
   Future<void> _finalizarCambioProgreso(double ratio) async {
@@ -565,6 +692,38 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     }
   }
 
+  bool _obtenerEsHorizontalActual() {
+    try {
+      final physicalSize = View.of(context).physicalSize;
+      if (physicalSize.width > 0 && physicalSize.height > 0) {
+        return physicalSize.width > physicalSize.height;
+      }
+    } catch (_) {}
+    try {
+      final size = MediaQuery.sizeOf(context);
+      if (size.width > 0 && size.height > 0) {
+        return size.width > size.height;
+      }
+    } catch (_) {}
+    return _estaEnHorizontal;
+  }
+
+  void _alTocarPantalla() {
+    if (_estaSaliendo) return;
+    if (_pantallaBloqueada) {
+      setState(() {
+        _mostrarBotonDesbloqueo = !_mostrarBotonDesbloqueo;
+      });
+      if (_mostrarBotonDesbloqueo) {
+        _reiniciarTemporizadorBotonDesbloqueo();
+      } else {
+        _temporizadorOcultarBotonDesbloqueo?.cancel();
+      }
+      return;
+    }
+    _alternarVisibilidadControles();
+  }
+
   void _alternarVisibilidadControles() {
     if (_estaSaliendo || _pantallaBloqueada) return;
     setState(() {
@@ -578,18 +737,19 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   /// Alterna el modo de orientación horizontal / vertical.
   Future<void> _alternarOrientacion() async {
-    _esHorizontal = !_esHorizontal;
-    if (_esHorizontal) {
+    if (_pantallaBloqueada) return;
+
+    final esLandscape = _obtenerEsHorizontalActual();
+    if (esLandscape) {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
+    } else {
       await SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
       ]);
-    } else {
-      await SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-      ]);
     }
-    setState(() {});
   }
 
   /// Cambia la velocidad de reproducción.
@@ -620,20 +780,550 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         pistaSubtituloActual: _reproductor.state.track.subtitle,
         alSeleccionarAudio: (track) => _reproductor.setAudioTrack(track),
         alSeleccionarSubtitulo: (track) => _reproductor.setSubtitleTrack(track),
+        alCargarSubtituloExterno: _cargarSubtituloExterno,
+        alAbrirSincronizacion: _mostrarModalSincronizacion,
       ),
     );
   }
 
-  /// Alterna bloqueo de pantalla.
-  void _alternarBloqueo() {
+  /// Alterna el bloqueo de pantalla y ancla o libera la orientación.
+  Future<void> _alternarBloqueo() async {
+    _temporizadorOcultarControles?.cancel();
+    _temporizadorOcultarOSD?.cancel();
+    _temporizadorOcultarBotonDesbloqueo?.cancel();
+
+    final nuevoEstadoBloqueado = !_pantallaBloqueada;
+
+    if (nuevoEstadoBloqueado) {
+      // ANCLAR: Congela la orientación real en que está la pantalla ahora mismo
+      final esLandscape = _obtenerEsHorizontalActual();
+      if (esLandscape) {
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      } else {
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+        ]);
+      }
+    }
+    // Al desbloquear: se mantiene la orientación en la que estaba (horizontal o vertical)
+    // sin forzar ningún giro, mostrando simplemente los controles de nuevo.
+
+    if (!mounted) return;
     setState(() {
-      _pantallaBloqueada = !_pantallaBloqueada;
-      _mostrarControles = !_pantallaBloqueada;
+      _pantallaBloqueada = nuevoEstadoBloqueado;
+      _mostrarControles = !nuevoEstadoBloqueado;
+      _mostrarBotonDesbloqueo = nuevoEstadoBloqueado;
     });
-    if (!_pantallaBloqueada) {
+
+    if (nuevoEstadoBloqueado) {
+      _reiniciarTemporizadorBotonDesbloqueo();
+    } else {
       _sincronizarEstadoInterfaz();
       _reiniciarTemporizadorOcultarControles();
     }
+  }
+
+  void _reiniciarTemporizadorBotonDesbloqueo() {
+    _temporizadorOcultarBotonDesbloqueo?.cancel();
+    if (_pantallaBloqueada && _mostrarBotonDesbloqueo && !_estaSaliendo) {
+      _temporizadorOcultarBotonDesbloqueo = Timer(
+        const Duration(milliseconds: 3200),
+        () {
+          if (mounted && _pantallaBloqueada && !_estaSaliendo) {
+            setState(() {
+              _mostrarBotonDesbloqueo = false;
+            });
+          }
+        },
+      );
+    }
+  }
+
+  /// Restablece la orientación completamente libre controlada por sensores.
+  Future<void> _liberarOrientacion() async {
+    if (_pantallaBloqueada) return;
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+      DeviceOrientation.portraitDown,
+    ]);
+  }
+
+  // =================== FUNCIONALIDADES PRO AVANZADAS ===================
+
+  /// Captura instantánea de fotograma con máxima resolución y guardado local.
+  Future<void> _capturarPantalla() async {
+    if (!_estaInicializado || _estaSaliendo) return;
+    try {
+      final Uint8List? bytes = await _reproductor.screenshot(
+        format: 'image/jpeg',
+      );
+      if (bytes == null || !mounted) return;
+
+      Directory? directorio;
+      if (Platform.isAndroid) {
+        directorio = Directory('/storage/emulated/0/Pictures/ReproductorMP4');
+        if (!await directorio.exists()) {
+          try {
+            await directorio.create(recursive: true);
+          } catch (_) {
+            directorio = await getExternalStorageDirectory();
+          }
+        }
+      } else {
+        directorio = await getApplicationDocumentsDirectory();
+      }
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final nombreArchivo = 'Captura_$timestamp.jpg';
+      final archivoGuardado = File('${directorio!.path}/$nombreArchivo');
+      await archivoGuardado.writeAsBytes(bytes);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(
+                Icons.check_circle_rounded,
+                color: ColoresApp.acentoPrimario,
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Captura guardada en Fotos: $nombreArchivo',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: ColoresApp.fondoTarjeta,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Error al capturar pantalla: $e',
+            style: const TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.red.shade800,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  /// Muestra el modal de temporizador de apagado.
+  void _mostrarModalTemporizador() {
+    if (_estaSaliendo) return;
+    showDialog(
+      context: context,
+      builder: (_) => ModalTemporizadorApagado(
+        segundosRestantes: _segundosRestantesApagado,
+        apagarAlTerminarVideo: _apagarAlTerminarVideo,
+        alSeleccionarMinutos: (minutos) {
+          _configurarTemporizadorApagado(minutos: minutos);
+        },
+        alAlternarFinVideo: (activo) {
+          _configurarTemporizadorApagado(alFinalizar: activo);
+        },
+      ),
+    );
+  }
+
+  void _configurarTemporizadorApagado({
+    int? minutos,
+    bool alFinalizar = false,
+  }) {
+    _cancelarTemporizadorApagado();
+    if (alFinalizar) {
+      setState(() {
+        _apagarAlTerminarVideo = true;
+        _segundosRestantesApagado = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'La reproducción se detendrá al finalizar el video actual',
+          ),
+          backgroundColor: ColoresApp.fondoTarjeta,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    if (minutos != null && minutos > 0) {
+      final segundosTotales = minutos * 60;
+      setState(() {
+        _apagarAlTerminarVideo = false;
+        _segundosRestantesApagado = segundosTotales;
+      });
+
+      _temporizadorApagadoTimer = Timer.periodic(const Duration(seconds: 1), (
+        timer,
+      ) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        if (_segundosRestantesApagado == null ||
+            _segundosRestantesApagado! <= 1) {
+          timer.cancel();
+          setState(() {
+            _segundosRestantesApagado = null;
+          });
+          if (_reproductorCreado && _reproductor.state.playing) {
+            _reproductor.pause();
+          }
+          _manejarSalida();
+        } else {
+          _segundosRestantesApagado = _segundosRestantesApagado! - 1;
+        }
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Temporizador configurado para $minutos minutos'),
+          backgroundColor: ColoresApp.fondoTarjeta,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _cancelarTemporizadorApagado() {
+    _temporizadorApagadoTimer?.cancel();
+    _temporizadorApagadoTimer = null;
+    setState(() {
+      _segundosRestantesApagado = null;
+      _apagarAlTerminarVideo = false;
+    });
+  }
+
+  /// Muestra el modal de sincronización fina de audio y subtítulos.
+  void _mostrarModalSincronizacion() {
+    if (!_estaInicializado || _estaSaliendo) return;
+    showDialog(
+      context: context,
+      builder: (_) => ModalSincronizacionPistas(
+        desfaseSubtitulosSegundos: _desfaseSubtitulosSegundos,
+        desfaseAudioSegundos: _desfaseAudioSegundos,
+        alCambiarDesfaseSubtitulos: _cambiarDesfaseSubtitulos,
+        alCambiarDesfaseAudio: _cambiarDesfaseAudio,
+      ),
+    );
+  }
+
+  Future<void> _cambiarDesfaseSubtitulos(double desfaseSegundos) async {
+    setState(() {
+      _desfaseSubtitulosSegundos = desfaseSegundos;
+    });
+    await ServicioPreferencias.guardarDesfaseSubtitulos(desfaseSegundos);
+    try {
+      final dynamic platform = _reproductor.platform;
+      if (platform != null) {
+        await platform.setProperty(
+          'sub-delay',
+          desfaseSegundos.toStringAsFixed(3),
+        );
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _cambiarDesfaseAudio(double desfaseSegundos) async {
+    setState(() {
+      _desfaseAudioSegundos = desfaseSegundos;
+    });
+    await ServicioPreferencias.guardarDesfaseAudio(desfaseSegundos);
+    try {
+      final dynamic platform = _reproductor.platform;
+      if (platform != null) {
+        await platform.setProperty(
+          'audio-delay',
+          desfaseSegundos.toStringAsFixed(3),
+        );
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _cargarSubtituloExterno() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['srt', 'vtt', 'ass', 'ssa', 'sub'],
+      );
+      if (result != null && result.files.single.path != null) {
+        final rutaSub = result.files.single.path!;
+        final nombreSub = result.files.single.name;
+        final track = SubtitleTrack.uri(rutaSub, title: nombreSub);
+        await _reproductor.setSubtitleTrack(track);
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Subtítulo cargado: $nombreSub'),
+            backgroundColor: ColoresApp.fondoTarjeta,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al cargar subtítulo: $e'),
+          backgroundColor: Colors.red.shade800,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _buscarYCargarSubtitulosLocales() async {
+    try {
+      final subtitulos =
+          await ServicioAlmacenamientoVideo.buscarSubtitulosLocales(
+            _videoActual.ruta,
+          );
+      if (subtitulos.isNotEmpty) {
+        final primerSub = subtitulos.first;
+        final nombre = primerSub.path.split(Platform.pathSeparator).last;
+        await _reproductor.setSubtitleTrack(
+          SubtitleTrack.uri(primerSub.path, title: nombre),
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _marcarPuntoBucleA() {
+    if (!_estaInicializado || _estaSaliendo) return;
+    final posMs = _reproductor.state.position.inMilliseconds;
+    setState(() {
+      _buclePuntoA = posMs;
+      if (_buclePuntoB != null && _buclePuntoB! <= _buclePuntoA!) {
+        _buclePuntoB = null;
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Punto A marcado en ${_formatearTiempoMs(posMs)}'),
+        backgroundColor: ColoresApp.fondoTarjeta,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _marcarPuntoBucleB() {
+    if (!_estaInicializado || _estaSaliendo) return;
+    final posMs = _reproductor.state.position.inMilliseconds;
+    if (_buclePuntoA == null) {
+      _marcarPuntoBucleA();
+      return;
+    }
+    if (posMs <= _buclePuntoA!) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('El punto B debe ser posterior al punto A'),
+          backgroundColor: Colors.red.shade800,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _buclePuntoB = posMs;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Bucle A-B activo: ${_formatearTiempoMs(_buclePuntoA!)} ➔ ${_formatearTiempoMs(posMs)}',
+        ),
+        backgroundColor: ColoresApp.fondoTarjeta,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _limpiarBucleAB() {
+    setState(() {
+      _buclePuntoA = null;
+      _buclePuntoB = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Bucle A-B desactivado'),
+        backgroundColor: ColoresApp.fondoTarjeta,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  String _formatearTiempoMs(int ms) {
+    final d = Duration(milliseconds: ms);
+    final horas = d.inHours;
+    final minutos = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final segundos = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (horas > 0) {
+      return '$horas:$minutos:$segundos';
+    }
+    return '$minutos:$segundos';
+  }
+
+  void _mostrarHojaPlaylist() {
+    if (_estaSaliendo) return;
+    HojaPlaylistReproductor.mostrar(
+      context,
+      listaVideos: _playlist,
+      indiceActual: _indiceActual,
+      reproduccionAutomatica: _reproduccionAutomatica,
+      alSeleccionarVideo: (video, _) {
+        _cambiarDeVideo(video);
+      },
+      alAlternarReproduccionAutomatica: _alternarReproduccionAutomatica,
+    );
+  }
+
+  void _iniciarCuentaRegresivaAutoplay() {
+    if (_indiceActual >= _playlist.length - 1) return;
+    _cancelarCuentaRegresivaAutoplay();
+
+    final siguiente = _playlist[_indiceActual + 1];
+    _siguienteVideoAutoplay = siguiente;
+    _segundosRestantesAutoplayNotifier.value = 5;
+    setState(() {
+      _mostrandoCuentaRegresivaAutoplay = true;
+      _mostrarControles = false;
+    });
+
+    _temporizadorAutoplay = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || _estaSaliendo) {
+        timer.cancel();
+        return;
+      }
+      if (_segundosRestantesAutoplayNotifier.value <= 1) {
+        timer.cancel();
+        _cancelarCuentaRegresivaAutoplay();
+        _reproducirSiguienteVideo();
+      } else {
+        _segundosRestantesAutoplayNotifier.value--;
+      }
+    });
+  }
+
+  void _cancelarCuentaRegresivaAutoplay() {
+    _temporizadorAutoplay?.cancel();
+    _temporizadorAutoplay = null;
+    if (_mostrandoCuentaRegresivaAutoplay) {
+      setState(() {
+        _mostrandoCuentaRegresivaAutoplay = false;
+        _siguienteVideoAutoplay = null;
+      });
+    }
+  }
+
+  void _reproducirAhoraAutoplay() {
+    _cancelarCuentaRegresivaAutoplay();
+    _reproducirSiguienteVideo();
+  }
+
+  Future<void> _alternarReproduccionAutomatica(bool nuevoValor) async {
+    await ServicioPreferencias.guardarReproduccionAutomatica(nuevoValor);
+    if (mounted) {
+      setState(() {
+        _reproduccionAutomatica = nuevoValor;
+      });
+      if (!nuevoValor && _mostrandoCuentaRegresivaAutoplay) {
+        _cancelarCuentaRegresivaAutoplay();
+      }
+    }
+  }
+
+  void _reproducirSiguienteVideo() {
+    _cancelarCuentaRegresivaAutoplay();
+    if (_indiceActual < _playlist.length - 1) {
+      _cambiarDeVideo(_playlist[_indiceActual + 1]);
+    }
+  }
+
+  void _reproducirVideoAnterior() {
+    _cancelarCuentaRegresivaAutoplay();
+    if (_indiceActual > 0) {
+      _cambiarDeVideo(_playlist[_indiceActual - 1]);
+    }
+  }
+
+  Future<void> _cambiarDeVideo(ModeloVideo nuevoVideo) async {
+    if (_estaSaliendo) return;
+    _cancelarCuentaRegresivaAutoplay();
+    await _guardarProgresoInmediato();
+
+    final nuevoIndice = _playlist.indexWhere((v) => v.ruta == nuevoVideo.ruta);
+    setState(() {
+      _videoActual = nuevoVideo;
+      if (nuevoIndice >= 0) _indiceActual = nuevoIndice;
+      _estaInicializado = false;
+      _tieneError = false;
+      _mensajeError = '';
+      _reintentadoConSoftware = false;
+      _buclePuntoA = null;
+      _buclePuntoB = null;
+    });
+
+    for (final s in _suscripciones) {
+      s.cancel();
+    }
+    _suscripciones.clear();
+
+    await _cargarYReproducirVideo();
+  }
+
+  void _mostrarInformacionVideo() {
+    if (_estaSaliendo) return;
+    showDialog(
+      context: context,
+      builder: (_) => DialogoInformacionVideo(video: _videoActual),
+    );
+  }
+
+  Future<void> _alternarFavorito() async {
+    final esFav = await ServicioPreferencias.alternarFavorito(
+      _videoActual.ruta,
+    );
+    setState(() {
+      _videoActual.esFavorito = esFav;
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          esFav ? 'Añadido a favoritos ⭐' : 'Eliminado de favoritos',
+          style: const TextStyle(color: Colors.white),
+        ),
+        backgroundColor: ColoresApp.fondoTarjeta,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   // =================== GESTOS TÁCTILES ===================
@@ -658,18 +1348,36 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         : 0.0;
 
     if (esLadoIzquierdo) {
+      // LADO IZQUIERDO: Control de Brillo y Modo Noche (se visualiza en la cápsula lateral derecha para no taparlo con la mano)
       _valorBrilloActual = (_valorBrilloActual + deltaSensibilidad).clamp(
-        0.0,
+        -1.0,
         1.0,
       );
-      try {
-        ScreenBrightness.instance.setApplicationScreenBrightness(
-          _valorBrilloActual,
+
+      if (_valorBrilloActual >= 0.0) {
+        // Rango normal: controla brillo del hardware y quita filtro nocturno
+        _opacidadFiltroNoche.value = 0.0;
+        try {
+          ScreenBrightness.instance.setApplicationScreenBrightness(
+            _valorBrilloActual,
+          );
+        } catch (_) {}
+      } else {
+        // Rango sub-cero (Modo Noche): mantiene brillo de pantalla al mínimo (0.0)
+        // y aplica filtro negro progresivo hasta un tope seguro de 75% de opacidad
+        _opacidadFiltroNoche.value = (-_valorBrilloActual * 0.75).clamp(
+          0.0,
+          0.75,
         );
-      } catch (_) {}
+        try {
+          ScreenBrightness.instance.setApplicationScreenBrightness(0.0);
+        } catch (_) {}
+      }
+
       _tipoGestoActual = TipoGestoOSD.brillo;
       _notificarCambioOSD();
     } else {
+      // LADO DERECHO: Control de Volumen (se visualiza en la cápsula lateral izquierda para no taparlo con la mano)
       _valorVolumenActual = (_valorVolumenActual + deltaSensibilidad).clamp(
         0.0,
         1.0,
@@ -758,17 +1466,24 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     WidgetsBinding.instance.removeObserver(this);
     _temporizadorOcultarControles?.cancel();
     _temporizadorOcultarOSD?.cancel();
+    _temporizadorOcultarBotonDesbloqueo?.cancel();
+    _temporizadorApagadoTimer?.cancel();
+    _temporizadorAutoplay?.cancel();
 
     for (final s in _suscripciones) {
       s.cancel();
     }
-    _estadoInterfaz.dispose();
+    _estadoProgreso.dispose();
+    _estadoReproduccion.dispose();
+    _segundosRestantesAutoplayNotifier.dispose();
     _versionOSD.dispose();
+    _opacidadFiltroNoche.dispose();
 
     try {
       ScreenBrightness.instance.resetApplicationScreenBrightness();
     } catch (_) {}
     WakelockPlus.disable();
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
     if (_reproductorCreado) {
       _reproductor.dispose();
@@ -782,15 +1497,18 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
+          if (_mostrandoCuentaRegresivaAutoplay) {
+            _cancelarCuentaRegresivaAutoplay();
+            return;
+          }
+          if (_pantallaBloqueada) {
+            _alternarBloqueo();
+            return;
+          }
           _manejarSalida();
         }
       },
-      child: _estaSaliendo
-          ? const Scaffold(
-              backgroundColor: Colors.black,
-              body: SizedBox.expand(),
-            )
-          : _construirCuerpoReproductor(context),
+      child: _construirCuerpoReproductor(context),
     );
   }
 
@@ -849,13 +1567,18 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       );
     }
 
+    final esHorizontal =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: LayoutBuilder(
         builder: (context, constraints) {
+          _estaEnHorizontal = constraints.maxWidth > constraints.maxHeight;
+
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: _alternarVisibilidadControles,
+            onTap: _alTocarPantalla,
             onDoubleTapDown: (details) =>
                 _alHacerDobleToque(details, constraints),
             onVerticalDragStart: (d) =>
@@ -872,7 +1595,14 @@ class _PantallaReproductorState extends State<PantallaReproductor>
               children: [
                 // 1. RENDERIZADO DEL VIDEO NATIVO CON MEDIA_KIT (LIBMPV)
                 if (_estaInicializado)
-                  RepaintBoundary(child: Center(child: _construirCajaVideo()))
+                  RepaintBoundary(
+                    child: Center(
+                      child: _LienzoVideo(
+                        controlador: _controladorVideo,
+                        aspecto: _aspectoActual,
+                      ),
+                    ),
+                  )
                 else
                   const Center(
                     child: CircularProgressIndicator(
@@ -881,6 +1611,23 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                       ),
                     ),
                   ),
+
+                // 1.5 FILTRO DE ATENUACIÓN EXTRA / MODO NOCHE (SUB-CERO)
+                // Se coloca sobre el video pero por debajo de los controles y OSD,
+                // con IgnorePointer para no bloquear toques ni gestos.
+                ValueListenableBuilder<double>(
+                  valueListenable: _opacidadFiltroNoche,
+                  builder: (context, opacidad, _) {
+                    if (opacidad <= 0.0) return const SizedBox.shrink();
+                    return RepaintBoundary(
+                      child: IgnorePointer(
+                        child: Container(
+                          color: Colors.black.withValues(alpha: opacidad),
+                        ),
+                      ),
+                    );
+                  },
+                ),
 
                 // 2. El OSD se actualiza sin reconstruir la superficie de video.
                 ValueListenableBuilder<int>(
@@ -894,60 +1641,115 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                             : _valorVolumenActual,
                         diferenciaSegundos: _diferenciaSeekSegundos,
                         posicionObjetivoMs: _posicionSeekArrastreMs,
-                        duracionTotalMs: widget.video.duracionTotalMs,
+                        duracionTotalMs: _videoActual.duracionTotalMs,
                       ),
                     );
                   },
                 ),
 
-                // 3. Solo los controles reaccionan a posición, buffer y play/pause.
-                if ((_mostrarControles || _pantallaBloqueada) &&
-                    _estaInicializado)
-                  ValueListenableBuilder<_EstadoInterfazReproductor>(
-                    valueListenable: _estadoInterfaz,
-                    builder: (context, estado, child) {
-                      return RepaintBoundary(
-                        child: ControlesReproductor(
-                          tituloVideo: widget.video.nombreSinExtension,
-                          estaReproduciendo: estado.reproduciendo,
-                          estaCargando: estado.cargando,
-                          pantallaBloqueada: _pantallaBloqueada,
-                          posicionActualMs: estado.posicionMs,
-                          duracionTotalMs: estado.duracionMs,
-                          posicionBufferMs: estado.bufferMs,
-                          velocidadActual: _velocidadActual,
-                          aspectoActual: _aspectoActual,
-                          esPantallaCompletaHorizontal: _esHorizontal,
-                          alAlternarPlayPause: _alternarPlayPause,
-                          alCambiarProgreso: _cambiarProgreso,
-                          alFinalizarCambioProgreso: _finalizarCambioProgreso,
-                          alRegresar: _manejarSalida,
-                          alAlternarBloqueo: _alternarBloqueo,
-                          alMostrarModalVelocidad: () {
-                            showDialog(
-                              context: context,
-                              builder: (_) => ModalVelocidad(
-                                velocidadActual: _velocidadActual,
-                                alSeleccionarVelocidad: _cambiarVelocidad,
-                              ),
-                            );
-                          },
-                          alMostrarModalAspecto: () {
-                            showDialog(
-                              context: context,
-                              builder: (_) => ModalAspecto(
-                                aspectoActual: _aspectoActual,
-                                alSeleccionarAspecto: _cambiarAspecto,
-                              ),
-                            );
-                          },
-                          alMostrarModalPistas: _mostrarModalPistas,
-                          alAlternarOrientacion: _alternarOrientacion,
-                          alSaltarAdelante: _saltarAdelante,
-                          alSaltarAtras: _saltarAtras,
-                        ),
-                      );
-                    },
+                // 3. Controles cinemáticos con desvanecimiento fluido (Curves.easeInOut)
+                RepaintBoundary(
+                  child: AnimatedOpacity(
+                    opacity:
+                        (_mostrarControles &&
+                            !_pantallaBloqueada &&
+                            _estaInicializado)
+                        ? 1.0
+                        : 0.0,
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeInOut,
+                    child: IgnorePointer(
+                      ignoring:
+                          !_mostrarControles ||
+                          _pantallaBloqueada ||
+                          !_estaInicializado,
+                      child: ControlesReproductor(
+                        tituloVideo: _videoActual.nombreSinExtension,
+                        estadoProgreso: _estadoProgreso,
+                        estadoReproduccion: _estadoReproduccion,
+                        pantallaBloqueada: _pantallaBloqueada,
+                        velocidadActual: _velocidadActual,
+                        aspectoActual: _aspectoActual,
+                        esPantallaCompletaHorizontal: esHorizontal,
+                        esFavorito: _videoActual.esFavorito,
+                        haySiguiente: _indiceActual < _playlist.length - 1,
+                        hayAnterior: _indiceActual > 0,
+                        cantidadVideosPlaylist: _playlist.length,
+                        bucleABActivo:
+                            _buclePuntoA != null || _buclePuntoB != null,
+                        alAlternarPlayPause: _alternarPlayPause,
+                        alCambiarProgreso: _cambiarProgreso,
+                        alFinalizarCambioProgreso: _finalizarCambioProgreso,
+                        alRegresar: _manejarSalida,
+                        alAlternarBloqueo: _alternarBloqueo,
+                        alMostrarModalVelocidad: () {
+                          showDialog(
+                            context: context,
+                            builder: (_) => ModalVelocidad(
+                              velocidadActual: _velocidadActual,
+                              alSeleccionarVelocidad: _cambiarVelocidad,
+                            ),
+                          );
+                        },
+                        alMostrarModalAspecto: () {
+                          showDialog(
+                            context: context,
+                            builder: (_) => ModalAspecto(
+                              aspectoActual: _aspectoActual,
+                              alSeleccionarAspecto: _cambiarAspecto,
+                            ),
+                          );
+                        },
+                        alMostrarModalPistas: _mostrarModalPistas,
+                        alAlternarOrientacion: _alternarOrientacion,
+                        alLiberarOrientacion: _liberarOrientacion,
+                        alSaltarAdelante: _saltarAdelante,
+                        alSaltarAtras: _saltarAtras,
+                        alSiguienteVideo: _indiceActual < _playlist.length - 1
+                            ? _reproducirSiguienteVideo
+                            : null,
+                        alVideoAnterior: _indiceActual > 0
+                            ? _reproducirVideoAnterior
+                            : null,
+                        alCapturarPantalla: _capturarPantalla,
+                        alMostrarPlaylist: _mostrarHojaPlaylist,
+                        alMostrarTemporizadorApagado: _mostrarModalTemporizador,
+                        alMostrarSincronizacion: _mostrarModalSincronizacion,
+                        alAlternarFavorito: _alternarFavorito,
+                        alMarcarPuntoA: _marcarPuntoBucleA,
+                        alMarcarPuntoB: _marcarPuntoBucleB,
+                        alLimpiarBucle: _limpiarBucleAB,
+                        alMostrarInfoVideo: _mostrarInformacionVideo,
+                      ),
+                    ),
+                  ),
+                ),
+
+                // 4. Botón de desbloqueo flotante (cuando SÍ está bloqueado)
+                if (_pantallaBloqueada) _construirBotonDesbloqueoFlotante(),
+
+                // 5. Superposición de cuenta regresiva estilo YouTube (Autoplay aislada)
+                if (_mostrandoCuentaRegresivaAutoplay &&
+                    _siguienteVideoAutoplay != null &&
+                    !_pantallaBloqueada)
+                  Positioned.fill(
+                    child: RepaintBoundary(
+                      child: ValueListenableBuilder<int>(
+                        valueListenable: _segundosRestantesAutoplayNotifier,
+                        builder: (context, segundos, _) {
+                          return OverlayReproduccionAutomatica(
+                            siguienteVideo: _siguienteVideoAutoplay!,
+                            segundosRestantes: segundos,
+                            totalSegundos: 5,
+                            reproduccionAutomaticaActiva:
+                                _reproduccionAutomatica,
+                            alReproducirAhora: _reproducirAhoraAutoplay,
+                            alCancelar: _cancelarCuentaRegresivaAutoplay,
+                            alAlternarAutoPlay: _alternarReproduccionAutomatica,
+                          );
+                        },
+                      ),
+                    ),
                   ),
               ],
             ),
@@ -957,11 +1759,86 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     );
   }
 
-  /// Construye el widget de video según la relación de aspecto seleccionada.
-  Widget _construirCajaVideo() {
+  /// Botón de desbloqueo que se oculta o muestra al tocar en cualquier parte de la pantalla.
+  Widget _construirBotonDesbloqueoFlotante() {
+    final insets = MediaQuery.paddingOf(context);
+    return Positioned(
+      top: 16 + insets.top,
+      left: 16 + insets.left,
+      child: AnimatedOpacity(
+        opacity: _mostrarBotonDesbloqueo ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+        child: IgnorePointer(
+          ignoring: !_mostrarBotonDesbloqueo,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _alternarBloqueo,
+              borderRadius: BorderRadius.circular(24),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: ColoresApp.acentoAmbar.withValues(alpha: 0.8),
+                    width: 1.4,
+                  ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black54,
+                      blurRadius: 10,
+                      offset: Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.lock_rounded,
+                      color: ColoresApp.acentoAmbar,
+                      size: 18,
+                    ),
+                    SizedBox(width: 7),
+                    Text(
+                      'Desbloquear',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Widget dedicado y aislado para el renderizado del video nativo.
+/// Permite mantener estable la instancia de Video y evitar reconstrucciones
+/// innecesarias del renderizador cuando cambian otros estados en la pantalla.
+class _LienzoVideo extends StatelessWidget {
+  final VideoController controlador;
+  final ModoRelacionAspecto aspecto;
+
+  const _LienzoVideo({required this.controlador, required this.aspecto});
+
+  @override
+  Widget build(BuildContext context) {
     BoxFit fit = BoxFit.contain;
 
-    switch (_aspectoActual) {
+    switch (aspecto) {
       case ModoRelacionAspecto.ajustar:
         fit = BoxFit.contain;
         break;
@@ -972,7 +1849,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         return AspectRatio(
           aspectRatio: 16 / 9,
           child: Video(
-            controller: _controladorVideo,
+            controller: controlador,
             fit: BoxFit.fill,
             controls: NoVideoControls,
           ),
@@ -981,7 +1858,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         return AspectRatio(
           aspectRatio: 4 / 3,
           child: Video(
-            controller: _controladorVideo,
+            controller: controlador,
             fit: BoxFit.fill,
             controls: NoVideoControls,
           ),
@@ -991,10 +1868,6 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         break;
     }
 
-    return Video(
-      controller: _controladorVideo,
-      fit: fit,
-      controls: NoVideoControls,
-    );
+    return Video(controller: controlador, fit: fit, controls: NoVideoControls);
   }
 }
