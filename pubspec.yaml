@@ -73,9 +73,6 @@ dependencies:
   # Desbloqueo de alta tasa de refresco a 144Hz/120Hz en pantallas Android compatibles
   flutter_displaymode: ^0.6.0
 
-  # Picture-in-Picture nativo de Android
-  floating: ^2.0.1
-
 
 dev_dependencies:
   flutter_test:
