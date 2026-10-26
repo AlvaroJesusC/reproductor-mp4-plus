@@ -6,6 +6,9 @@ import '../../constantes/colores_app.dart';
 class PanelLateralOpciones extends StatelessWidget {
   final double velocidadActual;
   final bool esPantallaCompletaHorizontal;
+  final bool zoomActivo;
+  final VoidCallback? alRestablecerZoom;
+  final VoidCallback? alActivarPipNativo;
   final VoidCallback alMostrarModalVelocidad;
   final VoidCallback? alMostrarSincronizacion;
   final VoidCallback? alMostrarInfoVideo;
@@ -16,6 +19,9 @@ class PanelLateralOpciones extends StatelessWidget {
     super.key,
     required this.velocidadActual,
     required this.esPantallaCompletaHorizontal,
+    this.zoomActivo = false,
+    this.alRestablecerZoom,
+    this.alActivarPipNativo,
     required this.alMostrarModalVelocidad,
     this.alMostrarSincronizacion,
     this.alMostrarInfoVideo,
@@ -28,6 +34,9 @@ class PanelLateralOpciones extends StatelessWidget {
     BuildContext context, {
     required double velocidadActual,
     required bool esPantallaCompletaHorizontal,
+    bool zoomActivo = false,
+    VoidCallback? alRestablecerZoom,
+    VoidCallback? alActivarPipNativo,
     required VoidCallback alMostrarModalVelocidad,
     VoidCallback? alMostrarSincronizacion,
     VoidCallback? alMostrarInfoVideo,
@@ -48,6 +57,9 @@ class PanelLateralOpciones extends StatelessWidget {
             child: PanelLateralOpciones(
               velocidadActual: velocidadActual,
               esPantallaCompletaHorizontal: esPantallaCompletaHorizontal,
+              zoomActivo: zoomActivo,
+              alRestablecerZoom: alRestablecerZoom,
+              alActivarPipNativo: alActivarPipNativo,
               alMostrarModalVelocidad: alMostrarModalVelocidad,
               alMostrarSincronizacion: alMostrarSincronizacion,
               alMostrarInfoVideo: alMostrarInfoVideo,
@@ -164,6 +176,18 @@ class PanelLateralOpciones extends StatelessWidget {
                   ),
                   physics: const BouncingScrollPhysics(),
                   children: [
+                    if (zoomActivo && alRestablecerZoom != null)
+                      _construirElemento(
+                        context,
+                        icono: Icons.zoom_out_map_rounded,
+                        colorIcono: ColoresApp.acentoPrimario,
+                        titulo: 'Restablecer Zoom (100%)',
+                        alPresionar: () {
+                          Navigator.of(context).pop();
+                          alRestablecerZoom?.call();
+                        },
+                      ),
+
                     _construirElemento(
                       context,
                       icono: Icons.speed_rounded,
@@ -224,6 +248,18 @@ class PanelLateralOpciones extends StatelessWidget {
                         alPresionar: () {
                           Navigator.of(context).pop();
                           alLiberarOrientacion?.call();
+                        },
+                      ),
+
+                    if (alActivarPipNativo != null)
+                      _construirElemento(
+                        context,
+                        icono: Icons.picture_in_picture_alt_rounded,
+                        colorIcono: ColoresApp.acentoAzul,
+                        titulo: 'Ventana flotante (PiP Android)',
+                        alPresionar: () {
+                          Navigator.of(context).pop();
+                          alActivarPipNativo?.call();
                         },
                       ),
                   ],

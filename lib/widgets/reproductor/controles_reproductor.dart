@@ -44,6 +44,10 @@ class ControlesReproductor extends StatelessWidget {
   final VoidCallback? alMarcarPuntoB;
   final VoidCallback? alLimpiarBucle;
   final VoidCallback? alMostrarInfoVideo;
+  final ValueGetter<bool>? esZoomActivo;
+  final VoidCallback? alRestablecerZoom;
+  final VoidCallback? alMinimizar;
+  final VoidCallback? alActivarPipNativo;
 
   const ControlesReproductor({
     super.key,
@@ -59,6 +63,10 @@ class ControlesReproductor extends StatelessWidget {
     this.hayAnterior = false,
     this.cantidadVideosPlaylist = 1,
     this.bucleABActivo = false,
+    this.esZoomActivo,
+    this.alRestablecerZoom,
+    this.alMinimizar,
+    this.alActivarPipNativo,
     required this.alAlternarPlayPause,
     this.alIniciarCambioProgreso,
     required this.alCambiarProgreso,
@@ -142,6 +150,25 @@ class ControlesReproductor extends StatelessWidget {
               ),
             ),
           ),
+          if (alMinimizar != null) ...[
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: alMinimizar,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+            ),
+          ],
           const SizedBox(width: 12),
 
           // Título del video
@@ -414,6 +441,9 @@ class ControlesReproductor extends StatelessWidget {
                   context,
                   velocidadActual: velocidadActual,
                   esPantallaCompletaHorizontal: esPantallaCompletaHorizontal,
+                  zoomActivo: esZoomActivo?.call() ?? false,
+                  alRestablecerZoom: alRestablecerZoom,
+                  alActivarPipNativo: alActivarPipNativo,
                   alMostrarModalVelocidad: alMostrarModalVelocidad,
                   alMostrarSincronizacion: alMostrarSincronizacion,
                   alMostrarInfoVideo: alMostrarInfoVideo,

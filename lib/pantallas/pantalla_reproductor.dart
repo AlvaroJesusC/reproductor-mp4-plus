@@ -24,6 +24,8 @@ import '../widgets/reproductor/modal_pistas_audio_subtitulos.dart';
 import '../widgets/reproductor/modal_sincronizacion_pistas.dart';
 import '../widgets/reproductor/modal_temporizador_apagado.dart';
 import '../widgets/reproductor/modal_velocidad.dart';
+import '../modulos/pip/gestor_pip_global.dart';
+import '../modulos/pip/servicio_pip_nativo.dart';
 import '../widgets/reproductor/overlay_reproduccion_automatica.dart';
 
 /// Pantalla del reproductor de video con soporte universal y transición suave sin distorsión al salir.
@@ -31,12 +33,16 @@ class PantallaReproductor extends StatefulWidget {
   final ModeloVideo video;
   final List<ModeloVideo>? listaReproduccion;
   final int? indiceInicial;
+  final Player? reproductorExistente;
+  final VideoController? controladorExistente;
 
   const PantallaReproductor({
     super.key,
     required this.video,
     this.listaReproduccion,
     this.indiceInicial,
+    this.reproductorExistente,
+    this.controladorExistente,
   });
 
   /// Abre el reproductor y restaura la interfaz después de revelar la biblioteca.
@@ -45,7 +51,26 @@ class PantallaReproductor extends StatefulWidget {
     ModeloVideo video, {
     List<ModeloVideo>? listaReproduccion,
     int? indiceInicial,
+    Player? reproductorExistente,
+    VideoController? controladorExistente,
   }) async {
+    // Si el PiP estaba activo con otro video, cerramos la sesión previa
+    if (GestorPipGlobal.instancia.estaActivo &&
+        GestorPipGlobal.instancia.videoActual?.ruta != video.ruta) {
+      await GestorPipGlobal.instancia.cerrar();
+      if (!context.mounted) return;
+    }
+
+    // Reutilizar el reproductor existente del PiP si no se especificó explícitamente
+    Player? rep = reproductorExistente;
+    VideoController? ctrl = controladorExistente;
+    if (rep == null &&
+        GestorPipGlobal.instancia.estaActivo &&
+        GestorPipGlobal.instancia.videoActual?.ruta == video.ruta) {
+      rep = GestorPipGlobal.instancia.reproductor;
+      ctrl = GestorPipGlobal.instancia.controladorVideo;
+    }
+
     await Navigator.of(context).push<void>(
       PageRouteBuilder(
         opaque: true,
@@ -54,6 +79,8 @@ class PantallaReproductor extends StatefulWidget {
               video: video,
               listaReproduccion: listaReproduccion,
               indiceInicial: indiceInicial,
+              reproductorExistente: rep,
+              controladorExistente: ctrl,
             ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(opacity: animation, child: child);
@@ -78,8 +105,19 @@ class PantallaReproductor extends StatefulWidget {
   State<PantallaReproductor> createState() => _PantallaReproductorState();
 }
 
+/// Modos de gesto para la desambiguación táctil entre 1 dedo y 2 dedos.
+enum _ModoGestoTactil {
+  ninguno,
+  indeterminado,
+  brillo,
+  volumen,
+  seek,
+  panConUnDedo,
+  zoomYPaneoMultitactil,
+}
+
 class _PantallaReproductorState extends State<PantallaReproductor>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   late final Player _reproductor;
   late final VideoController _controladorVideo;
   final List<StreamSubscription> _suscripciones = [];
@@ -101,11 +139,13 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   late int _indiceActual;
 
   bool _reproductorCreado = false;
+  bool _reproductorCedidoAlPip = false;
   bool _estaInicializado = false;
   bool _tieneError = false;
   String _mensajeError = '';
   bool _reintentadoConSoftware = false;
   bool _estaSaliendo = false;
+  StreamSubscription<PiPStatus>? _subscripcionPipNativo;
 
   // Reproducción automática del siguiente video (Autoplay estilo YouTube)
   bool _reproduccionAutomatica = true;
@@ -137,6 +177,18 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   // Bucle A-B
   int? _buclePuntoA;
   int? _buclePuntoB;
+
+  // Gestos multitáctiles: Pinch-to-Zoom (1.0x a 5.0x) y Paneo libre a 144Hz
+  final ValueNotifier<Matrix4> _matrizTransformacionZoom =
+      ValueNotifier(Matrix4.identity());
+  final ValueNotifier<double> _nivelZoomNotifier = ValueNotifier(1.0);
+  Offset _offsetActual = Offset.zero;
+  double _escalaBasePellizco = 1.0;
+  Offset _offsetBasePellizco = Offset.zero;
+  Offset _focalInicial = Offset.zero;
+  int _ultimoPointerCount = 0;
+  _ModoGestoTactil _modoGestoActivo = _ModoGestoTactil.ninguno;
+  AnimationController? _controladorAnimacionResetZoom;
 
   // Estado de gestos táctiles (OSD)
   TipoGestoOSD _tipoGestoActual = TipoGestoOSD.ninguno;
@@ -186,6 +238,16 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       }
     });
 
+    // Escuchar cambios de estado en PiP nativo de Android para ocultar controles
+    _subscripcionPipNativo = ServicioPipNativo.streamEstadoPip.listen((status) {
+      if (!mounted) return;
+      if (status == PiPStatus.enabled) {
+        setState(() {
+          _mostrarControles = false;
+        });
+      }
+    });
+
     _configurarModoInmersivo();
     _inicializarBrilloYVolumen();
     _inicializarMotorReproduccion();
@@ -225,6 +287,35 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   /// Inicializa el motor multimedia basado en libmpv con fallback automático.
   Future<void> _inicializarMotorReproduccion() async {
     try {
+      // Reutilizar motor y controlador existentes si venimos de expandir el PiP
+      if (widget.reproductorExistente != null &&
+          widget.controladorExistente != null) {
+        _reproductor = widget.reproductorExistente!;
+        _controladorVideo = widget.controladorExistente!;
+        _reproductorCreado = true;
+        _reanudacionAplicada = true;
+
+        _configurarSuscripcionesMotor();
+        _sincronizarEstadoInterfaz();
+
+        GestorPipGlobal.instancia.registrarSesion(
+          video: _videoActual,
+          reproductor: _reproductor,
+          controladorVideo: _controladorVideo,
+          playlist: _playlist,
+          indiceActual: _indiceActual,
+        );
+        GestorPipGlobal.instancia.marcarReproductorCompleto();
+
+        if (mounted) {
+          setState(() {
+            _estaInicializado = true;
+          });
+        }
+        _reiniciarTemporizadorOcultarControles();
+        return;
+      }
+
       _reproductor = Player(
         configuration: const PlayerConfiguration(bufferSize: 32 * 1024 * 1024),
       );
@@ -271,6 +362,165 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     }
   }
 
+  /// Configura las escuchas reactivas del reproductor multimedia.
+  void _configurarSuscripcionesMotor() {
+    for (final s in _suscripciones) {
+      s.cancel();
+    }
+    _suscripciones.clear();
+
+    // 1. Escuchar posición
+    _suscripciones.add(
+      _reproductor.stream.position.listen((pos) {
+        if (!mounted || _estaSaliendo || _arrastrandoScrubber) return;
+        final posMs = pos.inMilliseconds;
+        final durMs = _reproductor.state.duration.inMilliseconds;
+
+        // Bucle A-B activo
+        if (_buclePuntoA != null && _buclePuntoB != null) {
+          if (posMs >= _buclePuntoB!) {
+            _reproductor.seek(Duration(milliseconds: _buclePuntoA!));
+            return;
+          }
+        }
+
+        final videoCompletado = _esVideoCompletado(posMs, durMs);
+        if (_reanudacionAplicada) {
+          if (videoCompletado) {
+            _videoActual.estaCompletado = true;
+            _videoActual.posicionGuardadaMs = 0;
+          } else {
+            _videoActual.estaCompletado = false;
+            _videoActual.posicionGuardadaMs = posMs;
+          }
+          _videoActual.duracionTotalMs = durMs;
+          if (!videoCompletado) {
+            _progresoFinalizadoLimpiado = false;
+          }
+        }
+
+        if (_mostrarControles) {
+          if ((posMs - _ultimaPosicionMs).abs() >= 450 ||
+              !_reproductor.state.playing) {
+            _ultimaPosicionMs = posMs;
+            _actualizarProgreso(
+              posicionMs: posMs,
+              duracionMs: durMs,
+              bufferMs: _reproductor.state.buffer.inMilliseconds,
+            );
+          }
+        }
+
+        // Throttling de disco cada 5s
+        final ahora = DateTime.now().millisecondsSinceEpoch;
+        if (_reanudacionAplicada &&
+            ahora - _ultimoGuardadoTimestamp >= 5000 &&
+            _reproductor.state.playing) {
+          _ultimoGuardadoTimestamp = ahora;
+          if (videoCompletado) {
+            if (!_progresoFinalizadoLimpiado) {
+              _progresoFinalizadoLimpiado = true;
+              _videoActual.estaCompletado = true;
+              ServicioPreferencias.marcarVideoCompletado(
+                _videoActual.ruta,
+                duracionTotalMs: durMs,
+                completado: true,
+              );
+            }
+          } else {
+            ServicioPreferencias.guardarProgresoVideo(
+              rutaVideo: _videoActual.ruta,
+              posicionMs: posMs,
+              duracionTotalMs: durMs,
+            );
+          }
+        }
+      }),
+    );
+
+    // 2. Escuchar fin de video y estado de reproducción
+    _suscripciones.add(
+      _reproductor.stream.completed.listen((completado) {
+        if (!mounted || _estaSaliendo || !completado) return;
+        final durMs = _reproductor.state.duration.inMilliseconds;
+        _videoActual.estaCompletado = true;
+        _videoActual.posicionGuardadaMs = 0;
+        _progresoFinalizadoLimpiado = true;
+        ServicioPreferencias.marcarVideoCompletado(
+          _videoActual.ruta,
+          duracionTotalMs: durMs,
+          completado: true,
+        );
+        if (_apagarAlTerminarVideo) {
+          _manejarSalida();
+          return;
+        }
+        if (_indiceActual < _playlist.length - 1) {
+          if (_reproduccionAutomatica) {
+            _iniciarCuentaRegresivaAutoplay();
+          } else {
+            _actualizarReproduccion(reproduciendo: false);
+          }
+        }
+      }),
+    );
+
+    _suscripciones.add(
+      _reproductor.stream.playing.listen((reproduciendo) {
+        if (mounted && !_estaSaliendo) {
+          _actualizarReproduccion(reproduciendo: reproduciendo);
+        }
+      }),
+    );
+
+    // 3. Escuchar buffering
+    _suscripciones.add(
+      _reproductor.stream.buffering.listen((cargando) {
+        if (mounted && !_estaSaliendo) {
+          _actualizarReproduccion(cargando: cargando);
+        }
+      }),
+    );
+
+    // 4. Escuchar duración
+    _suscripciones.add(
+      _reproductor.stream.duration.listen((dur) {
+        if (mounted && dur > Duration.zero && !_estaSaliendo) {
+          _videoActual.duracionTotalMs = dur.inMilliseconds;
+          _actualizarProgreso(duracionMs: dur.inMilliseconds);
+        }
+      }),
+    );
+
+    // 5. Escuchar errores del reproductor con auto-fallback
+    _suscripciones.add(
+      _reproductor.stream.error.listen((error) async {
+        if (!mounted || _estaSaliendo) return;
+
+        if (!_reintentadoConSoftware &&
+            (error.toLowerCase().contains('codec') ||
+                error.toLowerCase().contains('format') ||
+                error.toLowerCase().contains('open') ||
+                error.toLowerCase().contains('exceeds'))) {
+          _reintentadoConSoftware = true;
+          try {
+            final dynamic platform = _reproductor.platform;
+            if (platform != null) {
+              await platform.setProperty('hwdec', 'no');
+            }
+            await _reproductor.open(Media(_videoActual.ruta), play: true);
+            return;
+          } catch (_) {}
+        }
+
+        setState(() {
+          _tieneError = true;
+          _mensajeError = error;
+        });
+      }),
+    );
+  }
+
   Future<void> _cargarYReproducirVideo() async {
     try {
       final archivo = File(_videoActual.ruta);
@@ -309,156 +559,8 @@ class _PantallaReproductorState extends State<PantallaReproductor>
               _videoActual.ruta,
             );
 
-      // 1. Escuchar posición
-      _suscripciones.add(
-        _reproductor.stream.position.listen((pos) {
-          if (!mounted || _estaSaliendo || _arrastrandoScrubber) return;
-          final posMs = pos.inMilliseconds;
-          final durMs = _reproductor.state.duration.inMilliseconds;
-
-          // Bucle A-B activo
-          if (_buclePuntoA != null && _buclePuntoB != null) {
-            if (posMs >= _buclePuntoB!) {
-              _reproductor.seek(Duration(milliseconds: _buclePuntoA!));
-              return;
-            }
-          }
-
-          final videoCompletado = _esVideoCompletado(posMs, durMs);
-          if (_reanudacionAplicada) {
-            if (videoCompletado) {
-              _videoActual.estaCompletado = true;
-              _videoActual.posicionGuardadaMs = 0;
-            } else {
-              _videoActual.estaCompletado = false;
-              _videoActual.posicionGuardadaMs = posMs;
-            }
-            _videoActual.duracionTotalMs = durMs;
-            if (!videoCompletado) {
-              _progresoFinalizadoLimpiado = false;
-            }
-          }
-
-          if (_mostrarControles) {
-            if ((posMs - _ultimaPosicionMs).abs() >= 450 ||
-                !_reproductor.state.playing) {
-              _ultimaPosicionMs = posMs;
-              _actualizarProgreso(
-                posicionMs: posMs,
-                duracionMs: durMs,
-                bufferMs: _reproductor.state.buffer.inMilliseconds,
-              );
-            }
-          }
-
-          // Throttling de disco cada 5s
-          final ahora = DateTime.now().millisecondsSinceEpoch;
-          if (_reanudacionAplicada &&
-              ahora - _ultimoGuardadoTimestamp >= 5000 &&
-              _reproductor.state.playing) {
-            _ultimoGuardadoTimestamp = ahora;
-            if (videoCompletado) {
-              if (!_progresoFinalizadoLimpiado) {
-                _progresoFinalizadoLimpiado = true;
-                _videoActual.estaCompletado = true;
-                ServicioPreferencias.marcarVideoCompletado(
-                  _videoActual.ruta,
-                  duracionTotalMs: durMs,
-                  completado: true,
-                );
-              }
-            } else {
-              ServicioPreferencias.guardarProgresoVideo(
-                rutaVideo: _videoActual.ruta,
-                posicionMs: posMs,
-                duracionTotalMs: durMs,
-              );
-            }
-          }
-        }),
-      );
-
-      // 2. Escuchar fin de video y estado de reproducción
-      _suscripciones.add(
-        _reproductor.stream.completed.listen((completado) {
-          if (!mounted || _estaSaliendo || !completado) return;
-          final durMs = _reproductor.state.duration.inMilliseconds;
-          _videoActual.estaCompletado = true;
-          _videoActual.posicionGuardadaMs = 0;
-          _progresoFinalizadoLimpiado = true;
-          ServicioPreferencias.marcarVideoCompletado(
-            _videoActual.ruta,
-            duracionTotalMs: durMs,
-            completado: true,
-          );
-          if (_apagarAlTerminarVideo) {
-            _manejarSalida();
-            return;
-          }
-          if (_indiceActual < _playlist.length - 1) {
-            if (_reproduccionAutomatica) {
-              _iniciarCuentaRegresivaAutoplay();
-            } else {
-              _actualizarReproduccion(reproduciendo: false);
-            }
-          }
-        }),
-      );
-
-      _suscripciones.add(
-        _reproductor.stream.playing.listen((reproduciendo) {
-          if (mounted && !_estaSaliendo) {
-            _actualizarReproduccion(reproduciendo: reproduciendo);
-          }
-        }),
-      );
-
-      // 3. Escuchar buffering
-      _suscripciones.add(
-        _reproductor.stream.buffering.listen((cargando) {
-          if (mounted && !_estaSaliendo) {
-            _actualizarReproduccion(cargando: cargando);
-          }
-        }),
-      );
-
-      // 4. Escuchar duración
-      _suscripciones.add(
-        _reproductor.stream.duration.listen((dur) {
-          if (mounted && dur > Duration.zero && !_estaSaliendo) {
-            _videoActual.duracionTotalMs = dur.inMilliseconds;
-            _actualizarProgreso(duracionMs: dur.inMilliseconds);
-          }
-        }),
-      );
-
-      // 5. Escuchar errores del reproductor con auto-fallback
-      _suscripciones.add(
-        _reproductor.stream.error.listen((error) async {
-          if (!mounted || _estaSaliendo) return;
-
-          if (!_reintentadoConSoftware &&
-              (error.toLowerCase().contains('codec') ||
-                  error.toLowerCase().contains('format') ||
-                  error.toLowerCase().contains('open') ||
-                  error.toLowerCase().contains('exceeds'))) {
-            _reintentadoConSoftware = true;
-            try {
-              final dynamic platform = _reproductor.platform;
-              if (platform != null) {
-                await platform.setProperty('hwdec', 'no');
-              }
-              await _reproductor.open(Media(_videoActual.ruta), play: true);
-              return;
-            } catch (_) {}
-          }
-
-          setState(() {
-            _tieneError = true;
-            _mensajeError = error;
-          });
-        }),
-      );
+      // Configurar suscripciones reactivas del motor
+      _configurarSuscripcionesMotor();
 
       // Abrir pausado, esperar sus metadatos y restaurar antes de reproducir.
       await _reproductor.open(Media(_videoActual.ruta), play: false);
@@ -477,6 +579,16 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
       if (!mounted) return;
       _sincronizarEstadoInterfaz();
+
+      // Registrar sesión en GestorPipGlobal para persistencia en miniplayer
+      GestorPipGlobal.instancia.registrarSesion(
+        video: _videoActual,
+        reproductor: _reproductor,
+        controladorVideo: _controladorVideo,
+        playlist: _playlist,
+        indiceActual: _indiceActual,
+      );
+
       setState(() {
         _estaInicializado = true;
       });
@@ -540,8 +652,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
       _guardarProgresoInmediato();
-      if (_estaInicializado && _reproductor.state.playing) {
-        _reproductor.pause();
+      if (!ServicioPipNativo.estaEnPip) {
+        if (_estaInicializado && _reproductor.state.playing) {
+          _reproductor.pause();
+        }
       }
     }
   }
@@ -585,6 +699,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _estaSaliendo = true;
     _cancelarCuentaRegresivaAutoplay();
 
+    // Cerrar sesión en PiP si el usuario cerró el reproductor completamente
+    unawaited(GestorPipGlobal.instancia.cerrar());
+
     // La posición y duración se capturan antes del primer await del guardado.
     // La escritura continúa en segundo plano sin retrasar el cierre de la ruta.
     if (_estaInicializado) {
@@ -601,6 +718,40 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
     // Cerrar en este mismo frame. `abrir` restaurará barras y orientación
     // después de que la biblioteca vuelva a estar completamente visible.
+    Navigator.of(context).pop();
+  }
+
+  /// Minimiza el reproductor al mini-reproductor in-app manteniendo la reproducción continua sin cortes.
+  void _minimizarAPip() {
+    if (_estaSaliendo) return;
+    if (!_estaInicializado || _tieneError) {
+      _manejarSalida();
+      return;
+    }
+
+    _estaSaliendo = true;
+    _cancelarCuentaRegresivaAutoplay();
+    unawaited(_guardarProgresoInmediato());
+
+    try {
+      unawaited(ScreenBrightness.instance.resetApplicationScreenBrightness());
+    } catch (_) {}
+    unawaited(WakelockPlus.disable());
+    unawaited(
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+    );
+
+    // Registrar y ceder el reproductor al gestor global sin destruirlo
+    GestorPipGlobal.instancia.registrarSesion(
+      video: _videoActual,
+      reproductor: _reproductor,
+      controladorVideo: _controladorVideo,
+      playlist: _playlist,
+      indiceActual: _indiceActual,
+    );
+    GestorPipGlobal.instancia.minimizar();
+    _reproductorCedidoAlPip = true;
+
     Navigator.of(context).pop();
   }
 
@@ -794,6 +945,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   /// Cambia el modo de aspecto visual del video.
   void _cambiarAspecto(ModoRelacionAspecto nuevoAspecto) {
+    _restablecerZoom(animado: false);
     setState(() {
       _aspectoActual = nuevoAspecto;
     });
@@ -1311,6 +1463,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     await _guardarProgresoInmediato();
 
     final nuevoIndice = _playlist.indexWhere((v) => v.ruta == nuevoVideo.ruta);
+    _restablecerZoom(animado: false);
     setState(() {
       _videoActual = nuevoVideo;
       if (nuevoIndice >= 0) _indiceActual = nuevoIndice;
@@ -1321,6 +1474,11 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       _buclePuntoA = null;
       _buclePuntoB = null;
     });
+
+    GestorPipGlobal.instancia.actualizarVideoActual(
+      _videoActual,
+      nuevoIndice >= 0 ? nuevoIndice : _indiceActual,
+    );
 
     for (final s in _suscripciones) {
       s.cancel();
@@ -1405,36 +1563,220 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     );
   }
 
-  // =================== GESTOS TÁCTILES ===================
+  // =================== GESTOS TÁCTILES Y ZOOM MULTITÁCTIL ===================
 
-  void _alIniciarArrastreVertical(
-    DragStartDetails details,
+  /// Crea una matriz 4x4 para transformación en GPU (escala y traslación) a 144 FPS sin jank.
+  Matrix4 _crearMatrizTransformacion(double escala, Offset offset) {
+    final matriz = Matrix4.identity();
+    matriz.setEntry(0, 0, escala);
+    matriz.setEntry(1, 1, escala);
+    matriz.setEntry(0, 3, offset.dx);
+    matriz.setEntry(1, 3, offset.dy);
+    return matriz;
+  }
+
+  /// Restablece suavemente (con animación) o de inmediato el zoom a 1.0x y el desplazamiento a cero.
+  void _restablecerZoom({bool animado = true}) {
+    if (_nivelZoomNotifier.value <= 1.01 && _offsetActual == Offset.zero) return;
+
+    if (!animado) {
+      _controladorAnimacionResetZoom?.stop();
+      _nivelZoomNotifier.value = 1.0;
+      _offsetActual = Offset.zero;
+      _matrizTransformacionZoom.value = Matrix4.identity();
+      _mostrarOSDZoom(1.0);
+      return;
+    }
+
+    final escalaInicial = _nivelZoomNotifier.value;
+    final offsetInicial = _offsetActual;
+
+    _controladorAnimacionResetZoom?.dispose();
+    final controlador = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    );
+    _controladorAnimacionResetZoom = controlador;
+
+    final animacion = CurvedAnimation(
+      parent: controlador,
+      curve: Curves.easeOutCubic,
+    );
+
+    animacion.addListener(() {
+      final t = animacion.value;
+      final escalaActual = escalaInicial + (1.0 - escalaInicial) * t;
+      final offsetActual = Offset(
+        offsetInicial.dx + (0.0 - offsetInicial.dx) * t,
+        offsetInicial.dy + (0.0 - offsetInicial.dy) * t,
+      );
+      _nivelZoomNotifier.value = escalaActual;
+      _offsetActual = offsetActual;
+      _matrizTransformacionZoom.value =
+          _crearMatrizTransformacion(escalaActual, offsetActual);
+    });
+
+    controlador.forward().then((_) {
+      if (mounted) {
+        _nivelZoomNotifier.value = 1.0;
+        _offsetActual = Offset.zero;
+        _matrizTransformacionZoom.value = Matrix4.identity();
+        _mostrarOSDZoom(1.0);
+      }
+    });
+  }
+
+  void _mostrarOSDZoom(double nivel) {
+    _temporizadorOcultarOSD?.cancel();
+    _tipoGestoActual = TipoGestoOSD.zoom;
+    _notificarCambioOSD();
+    _programarOcultarOSD();
+  }
+
+  void _alIniciarEscala(
+    ScaleStartDetails details,
     BoxConstraints constraints,
   ) {
     if (_pantallaBloqueada || _estaSaliendo) return;
     _temporizadorOcultarOSD?.cancel();
+    _controladorAnimacionResetZoom?.stop();
+
+    _escalaBasePellizco = _nivelZoomNotifier.value;
+    _offsetBasePellizco = _offsetActual;
+    _focalInicial = details.localFocalPoint;
+    _ultimoPointerCount = details.pointerCount;
+
+    if (details.pointerCount >= 2) {
+      _modoGestoActivo = _ModoGestoTactil.zoomYPaneoMultitactil;
+      _tipoGestoActual = TipoGestoOSD.zoom;
+      _notificarCambioOSD();
+    } else {
+      if (_nivelZoomNotifier.value > 1.05) {
+        _modoGestoActivo = _ModoGestoTactil.panConUnDedo;
+      } else {
+        _modoGestoActivo = _ModoGestoTactil.indeterminado;
+      }
+    }
   }
 
-  void _alActualizarArrastreVertical(
-    DragUpdateDetails details,
+  void _alActualizarEscala(
+    ScaleUpdateDetails details,
     BoxConstraints constraints,
   ) {
     if (_pantallaBloqueada || _estaSaliendo) return;
-    final anchoPantalla = constraints.maxWidth;
-    final esLadoIzquierdo = details.localPosition.dx < (anchoPantalla / 2);
-    final deltaSensibilidad = details.primaryDelta != null
-        ? -details.primaryDelta! / 200.0
-        : 0.0;
 
-    if (esLadoIzquierdo) {
-      // LADO IZQUIERDO: Control de Brillo y Modo Noche (se visualiza en la cápsula lateral derecha para no taparlo con la mano)
-      _valorBrilloActual = (_valorBrilloActual + deltaSensibilidad).clamp(
-        -1.0,
-        1.0,
+    // Transición dinámica: si se añade un 2do dedo durante un arrastre de 1 dedo
+    if (details.pointerCount >= 2 &&
+        _modoGestoActivo != _ModoGestoTactil.zoomYPaneoMultitactil) {
+      if (_arrastrandoScrubber) {
+        _arrastrandoScrubber = false;
+      }
+      _modoGestoActivo = _ModoGestoTactil.zoomYPaneoMultitactil;
+      _escalaBasePellizco = _nivelZoomNotifier.value;
+      _offsetBasePellizco = _offsetActual;
+      _focalInicial = details.localFocalPoint;
+      _ultimoPointerCount = details.pointerCount;
+      _tipoGestoActual = TipoGestoOSD.zoom;
+      _notificarCambioOSD();
+    }
+
+    // Reanclar si cambia la cantidad de dedos para evitar saltos
+    if (details.pointerCount >= 2 &&
+        details.pointerCount != _ultimoPointerCount) {
+      _ultimoPointerCount = details.pointerCount;
+      _escalaBasePellizco = _nivelZoomNotifier.value;
+      _offsetBasePellizco = _offsetActual;
+      _focalInicial = details.localFocalPoint;
+    }
+
+    // 1. Zoom multitáctil y paneo libre (2 dedos)
+    if (_modoGestoActivo == _ModoGestoTactil.zoomYPaneoMultitactil) {
+      final nuevaEscala = (_escalaBasePellizco * details.scale).clamp(1.0, 5.0);
+      final deltaFocal = details.localFocalPoint - _focalInicial;
+      final nuevoOffset = _offsetBasePellizco + deltaFocal;
+
+      final maxPanX = ((nuevaEscala - 1.0) * constraints.maxWidth / 2.0)
+          .clamp(0.0, double.infinity);
+      final maxPanY = ((nuevaEscala - 1.0) * constraints.maxHeight / 2.0)
+          .clamp(0.0, double.infinity);
+
+      final offsetClampeado = Offset(
+        nuevoOffset.dx.clamp(-maxPanX, maxPanX),
+        nuevoOffset.dy.clamp(-maxPanY, maxPanY),
       );
 
+      final escalaFinal = nuevaEscala <= 1.01 ? 1.0 : nuevaEscala;
+      _nivelZoomNotifier.value = escalaFinal;
+      _offsetActual = escalaFinal == 1.0 ? Offset.zero : offsetClampeado;
+      _matrizTransformacionZoom.value =
+          _crearMatrizTransformacion(escalaFinal, _offsetActual);
+
+      _tipoGestoActual = TipoGestoOSD.zoom;
+      _notificarCambioOSD();
+      return;
+    }
+
+    // 2. Paneo con 1 dedo si el video ya tiene zoom activo (>1.05x)
+    if (_modoGestoActivo == _ModoGestoTactil.panConUnDedo) {
+      final deltaFocal = details.localFocalPoint - _focalInicial;
+      final nuevoOffset = _offsetBasePellizco + deltaFocal;
+      final escalaActual = _nivelZoomNotifier.value;
+
+      final maxPanX = ((escalaActual - 1.0) * constraints.maxWidth / 2.0)
+          .clamp(0.0, double.infinity);
+      final maxPanY = ((escalaActual - 1.0) * constraints.maxHeight / 2.0)
+          .clamp(0.0, double.infinity);
+
+      final offsetClampeado = Offset(
+        nuevoOffset.dx.clamp(-maxPanX, maxPanX),
+        nuevoOffset.dy.clamp(-maxPanY, maxPanY),
+      );
+
+      _offsetActual = offsetClampeado;
+      _matrizTransformacionZoom.value =
+          _crearMatrizTransformacion(escalaActual, offsetClampeado);
+      return;
+    }
+
+    // 3. 1 dedo en modo normal (zoom 1.0x) -> Brillo, Volumen o Seek
+    if (_modoGestoActivo == _ModoGestoTactil.indeterminado) {
+      final dx = details.localFocalPoint.dx - _focalInicial.dx;
+      final dy = details.localFocalPoint.dy - _focalInicial.dy;
+
+      if (dx.abs() > 10.0 || dy.abs() > 10.0) {
+        if (dy.abs() > dx.abs()) {
+          final esLadoIzquierdo =
+              _focalInicial.dx < (constraints.maxWidth / 2.0);
+          if (esLadoIzquierdo) {
+            _modoGestoActivo = _ModoGestoTactil.brillo;
+            _tipoGestoActual = TipoGestoOSD.brillo;
+          } else {
+            _modoGestoActivo = _ModoGestoTactil.volumen;
+            _tipoGestoActual = TipoGestoOSD.volumen;
+          }
+        } else {
+          if (_estaInicializado) {
+            _modoGestoActivo = _ModoGestoTactil.seek;
+            _arrastrandoScrubber = true;
+            _posicionInicialTouchX = details.localFocalPoint.dx;
+            _posicionInicialSeekMs =
+                _reproductor.state.position.inMilliseconds;
+            _diferenciaSeekSegundos = 0;
+            _posicionSeekArrastreMs = _posicionInicialSeekMs;
+            _tipoGestoActual = TipoGestoOSD.posicionTiempo;
+          }
+        }
+      } else {
+        return;
+      }
+    }
+
+    if (_modoGestoActivo == _ModoGestoTactil.brillo) {
+      final deltaSensibilidad = -details.focalPointDelta.dy / 200.0;
+      _valorBrilloActual =
+          (_valorBrilloActual + deltaSensibilidad).clamp(-1.0, 1.0);
+
       if (_valorBrilloActual >= 0.0) {
-        // Rango normal: controla brillo del hardware y quita filtro nocturno
         _opacidadFiltroNoche.value = 0.0;
         try {
           ScreenBrightness.instance.setApplicationScreenBrightness(
@@ -1442,12 +1784,8 @@ class _PantallaReproductorState extends State<PantallaReproductor>
           );
         } catch (_) {}
       } else {
-        // Rango sub-cero (Modo Noche): mantiene brillo de pantalla al mínimo (0.0)
-        // y aplica filtro negro progresivo hasta un tope seguro de 75% de opacidad
-        _opacidadFiltroNoche.value = (-_valorBrilloActual * 0.75).clamp(
-          0.0,
-          0.75,
-        );
+        _opacidadFiltroNoche.value =
+            (-_valorBrilloActual * 0.75).clamp(0.0, 0.75);
         try {
           ScreenBrightness.instance.setApplicationScreenBrightness(0.0);
         } catch (_) {}
@@ -1455,63 +1793,42 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
       _tipoGestoActual = TipoGestoOSD.brillo;
       _notificarCambioOSD();
-    } else {
-      // LADO DERECHO: Control de Volumen (se visualiza en la cápsula lateral izquierda para no taparlo con la mano)
-      _valorVolumenActual = (_valorVolumenActual + deltaSensibilidad).clamp(
-        0.0,
-        1.0,
-      );
+    } else if (_modoGestoActivo == _ModoGestoTactil.volumen) {
+      final deltaSensibilidad = -details.focalPointDelta.dy / 200.0;
+      _valorVolumenActual =
+          (_valorVolumenActual + deltaSensibilidad).clamp(0.0, 1.0);
       try {
         _controladorVolumen.setVolume(_valorVolumenActual);
       } catch (_) {}
       _tipoGestoActual = TipoGestoOSD.volumen;
       _notificarCambioOSD();
+    } else if (_modoGestoActivo == _ModoGestoTactil.seek) {
+      final duracionTotalMs = _reproductor.state.duration.inMilliseconds;
+      if (duracionTotalMs <= 0) return;
+
+      final deltaX = details.localFocalPoint.dx - _posicionInicialTouchX;
+      final factorSegundos = 120.0 / constraints.maxWidth;
+      final segundos = (deltaX * factorSegundos).round();
+
+      _diferenciaSeekSegundos = segundos;
+      _posicionSeekArrastreMs = (_posicionInicialSeekMs + (segundos * 1000))
+          .clamp(0, duracionTotalMs);
+
+      _tipoGestoActual = TipoGestoOSD.posicionTiempo;
+      _notificarCambioOSD();
+      _ejecutarFastSeek(Duration(milliseconds: _posicionSeekArrastreMs));
     }
   }
 
-  void _alFinalizarArrastreVertical(DragEndDetails details) {
+  Future<void> _alFinalizarEscala(ScaleEndDetails details) async {
+    if (_modoGestoActivo == _ModoGestoTactil.seek) {
+      _arrastrandoScrubber = false;
+      await _reproductor.seek(Duration(milliseconds: _posicionSeekArrastreMs));
+      _reiniciarTemporizadorOcultarControles();
+    }
+
+    _modoGestoActivo = _ModoGestoTactil.ninguno;
     _programarOcultarOSD();
-  }
-
-  // ===== BÚSQUEDA FLUIDA POR DESLIZAMIENTO HORIZONTAL =====
-
-  void _alIniciarArrastreHorizontal(DragStartDetails details) {
-    if (_pantallaBloqueada || !_estaInicializado || _estaSaliendo) return;
-    _temporizadorOcultarOSD?.cancel();
-    _arrastrandoScrubber = true;
-    _posicionInicialTouchX = details.localPosition.dx;
-    _posicionInicialSeekMs = _reproductor.state.position.inMilliseconds;
-    _diferenciaSeekSegundos = 0;
-    _posicionSeekArrastreMs = _posicionInicialSeekMs;
-  }
-
-  void _alActualizarArrastreHorizontal(
-    DragUpdateDetails details,
-    BoxConstraints constraints,
-  ) {
-    if (_pantallaBloqueada || !_estaInicializado || _estaSaliendo) return;
-    final duracionTotalMs = _reproductor.state.duration.inMilliseconds;
-    if (duracionTotalMs <= 0) return;
-
-    final deltaX = details.localPosition.dx - _posicionInicialTouchX;
-    final factorSegundos = 120.0 / constraints.maxWidth;
-    final segundos = (deltaX * factorSegundos).round();
-
-    _diferenciaSeekSegundos = segundos;
-    _posicionSeekArrastreMs = (_posicionInicialSeekMs + (segundos * 1000))
-        .clamp(0, duracionTotalMs);
-
-    _tipoGestoActual = TipoGestoOSD.posicionTiempo;
-    _notificarCambioOSD();
-    _ejecutarFastSeek(Duration(milliseconds: _posicionSeekArrastreMs));
-  }
-
-  Future<void> _alFinalizarArrastreHorizontal(DragEndDetails details) async {
-    if (_pantallaBloqueada || !_estaInicializado || _estaSaliendo) return;
-    _arrastrandoScrubber = false;
-    await _reproductor.seek(Duration(milliseconds: _posicionSeekArrastreMs));
-    _programarOcultarOSD();
-    _reiniciarTemporizadorOcultarControles();
   }
 
   void _mostrarOSDSeek(int seg, int posObjetivoMs) {
@@ -1525,7 +1842,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   void _programarOcultarOSD() {
     _temporizadorOcultarOSD?.cancel();
-    _temporizadorOcultarOSD = Timer(const Duration(milliseconds: 1400), () {
+    _temporizadorOcultarOSD = Timer(const Duration(milliseconds: 1200), () {
       if (mounted && !_estaSaliendo) {
         _tipoGestoActual = TipoGestoOSD.ninguno;
         _notificarCambioOSD();
@@ -1535,6 +1852,13 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   void _alHacerDobleToque(TapDownDetails details, BoxConstraints constraints) {
     if (_pantallaBloqueada || _estaSaliendo) return;
+
+    // Si el video tiene zoom activo (> 1.05x), el doble toque restablece el zoom a 1.0x suavemente
+    if (_nivelZoomNotifier.value > 1.05) {
+      _restablecerZoom(animado: true);
+      return;
+    }
+
     final puntoX = details.localPosition.dx;
     if (puntoX > (constraints.maxWidth / 2)) {
       _saltarAdelante();
@@ -1545,6 +1869,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   @override
   void dispose() {
+    _subscripcionPipNativo?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _temporizadorOcultarControles?.cancel();
     _temporizadorOcultarOSD?.cancel();
@@ -1555,6 +1880,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     for (final s in _suscripciones) {
       s.cancel();
     }
+    _controladorAnimacionResetZoom?.dispose();
+    _matrizTransformacionZoom.dispose();
+    _nivelZoomNotifier.dispose();
     _estadoProgreso.dispose();
     _estadoReproduccion.dispose();
     _segundosRestantesAutoplayNotifier.dispose();
@@ -1567,7 +1895,8 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     WakelockPlus.disable();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
-    if (_reproductorCreado) {
+    // Si el reproductor fue cedido al PiP, se mantiene vivo para el mini-reproductor
+    if (_reproductorCreado && !_reproductorCedidoAlPip) {
       _reproductor.dispose();
     }
     super.dispose();
@@ -1587,7 +1916,11 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             _alternarBloqueo();
             return;
           }
-          _manejarSalida();
+          if (_estaInicializado && !_tieneError) {
+            _minimizarAPip();
+          } else {
+            _manejarSalida();
+          }
         }
       },
       child: _construirCuerpoReproductor(context),
@@ -1656,32 +1989,48 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       backgroundColor: Colors.black,
       body: LayoutBuilder(
         builder: (context, constraints) {
-          _estaEnHorizontal = constraints.maxWidth > constraints.maxHeight;
+          final nuevoHorizontal =
+              constraints.maxWidth > constraints.maxHeight;
+          if (_estaEnHorizontal != nuevoHorizontal) {
+            _estaEnHorizontal = nuevoHorizontal;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _restablecerZoom(animado: false);
+            });
+          }
 
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: _alTocarPantalla,
+            onDoubleTap: () {},
             onDoubleTapDown: (details) =>
                 _alHacerDobleToque(details, constraints),
-            onVerticalDragStart: (d) =>
-                _alIniciarArrastreVertical(d, constraints),
-            onVerticalDragUpdate: (d) =>
-                _alActualizarArrastreVertical(d, constraints),
-            onVerticalDragEnd: _alFinalizarArrastreVertical,
-            onHorizontalDragStart: _alIniciarArrastreHorizontal,
-            onHorizontalDragUpdate: (d) =>
-                _alActualizarArrastreHorizontal(d, constraints),
-            onHorizontalDragEnd: _alFinalizarArrastreHorizontal,
+            onScaleStart: (details) =>
+                _alIniciarEscala(details, constraints),
+            onScaleUpdate: (details) =>
+                _alActualizarEscala(details, constraints),
+            onScaleEnd: _alFinalizarEscala,
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // 1. RENDERIZADO DEL VIDEO NATIVO CON MEDIA_KIT (LIBMPV)
+                // 1. RENDERIZADO DEL VIDEO NATIVO CON MEDIA_KIT (LIBMPV) AISLADO CON TRANSFORM
                 if (_estaInicializado)
-                  RepaintBoundary(
-                    child: Center(
-                      child: _LienzoVideo(
-                        controlador: _controladorVideo,
-                        aspecto: _aspectoActual,
+                  ClipRect(
+                    child: ValueListenableBuilder<Matrix4>(
+                      valueListenable: _matrizTransformacionZoom,
+                      builder: (context, matriz, child) {
+                        return Transform(
+                          transform: matriz,
+                          alignment: Alignment.center,
+                          child: child,
+                        );
+                      },
+                      child: RepaintBoundary(
+                        child: Center(
+                          child: _LienzoVideo(
+                            controlador: _controladorVideo,
+                            aspecto: _aspectoActual,
+                          ),
+                        ),
                       ),
                     ),
                   )
@@ -1724,6 +2073,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                         diferenciaSegundos: _diferenciaSeekSegundos,
                         posicionObjetivoMs: _posicionSeekArrastreMs,
                         duracionTotalMs: _videoActual.duracionTotalMs,
+                        porcentajeZoom: _nivelZoomNotifier.value,
                       ),
                     );
                   },
@@ -1759,11 +2109,20 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                         cantidadVideosPlaylist: _playlist.length,
                         bucleABActivo:
                             _buclePuntoA != null || _buclePuntoB != null,
+                        esZoomActivo: () => _nivelZoomNotifier.value > 1.05,
+                        alRestablecerZoom: () =>
+                            _restablecerZoom(animado: true),
                         alAlternarPlayPause: _alternarPlayPause,
                         alIniciarCambioProgreso: _iniciarCambioProgreso,
                         alCambiarProgreso: _cambiarProgreso,
                         alFinalizarCambioProgreso: _finalizarCambioProgreso,
-                        alRegresar: _manejarSalida,
+                        alRegresar: () => (_estaInicializado && !_tieneError)
+                            ? _minimizarAPip()
+                            : _manejarSalida(),
+                        alMinimizar: () => (_estaInicializado && !_tieneError)
+                            ? _minimizarAPip()
+                            : null,
+                        alActivarPipNativo: () => ServicioPipNativo.activarPip(),
                         alAlternarBloqueo: _alternarBloqueo,
                         alMostrarModalVelocidad: () {
                           showDialog(

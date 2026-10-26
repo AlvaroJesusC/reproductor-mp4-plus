@@ -6,6 +6,8 @@ import '../modelos/modelo_video.dart';
 import '../servicios/servicio_almacenamiento_video.dart';
 import '../servicios/servicio_permisos.dart';
 import '../servicios/servicio_preferencias.dart';
+import '../modulos/pip/envoltorio_pip_scaffold.dart';
+import '../modulos/pip/gestor_pip_global.dart';
 import 'pantalla_reproductor.dart';
 import 'pestanas/pestana_carpetas.dart';
 import 'pestanas/pestana_recientes.dart';
@@ -158,6 +160,12 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   void _manejarRetroceso(bool didPop) {
     if (didPop) return;
 
+    // 0. Si el mini-reproductor está activo, cerrarlo primero antes de salir
+    if (GestorPipGlobal.instancia.estaMinimizado) {
+      GestorPipGlobal.instancia.cerrar();
+      return;
+    }
+
     // 1. Si estamos en la pestaña Carpetas, retroceder dentro de las subcarpetas/series/temporadas
     if (_indicePestana == 2) {
       final seManejoInternamente =
@@ -291,8 +299,9 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) => _manejarRetroceso(didPop),
-      child: Scaffold(
-        appBar: AppBar(
+      child: EnvoltorioPipScaffold(
+        child: Scaffold(
+          appBar: AppBar(
           title: Row(
             children: [
               Container(
@@ -383,26 +392,35 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
                   ),
                 ],
               ),
-        floatingActionButton: Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: ColoresApp.acentoPrimario.withValues(alpha: 0.35),
-                blurRadius: 14,
-                spreadRadius: 1,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: FloatingActionButton(
-            elevation: 0,
-            backgroundColor: ColoresApp.acentoPrimario,
-            foregroundColor: Colors.white,
-            shape: const CircleBorder(),
-            tooltip: 'Abrir archivo de video',
-            onPressed: _abrirSelectorManual,
-            child: const Icon(Icons.folder_open_rounded, size: 24),
+        floatingActionButton: ValueListenableBuilder<EstadoPip>(
+          valueListenable: GestorPipGlobal.instancia.estadoPip,
+          builder: (context, estado, child) {
+            if (estado == EstadoPip.minimizadoInApp) {
+              return const SizedBox.shrink();
+            }
+            return child!;
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: ColoresApp.acentoPrimario.withValues(alpha: 0.35),
+                  blurRadius: 14,
+                  spreadRadius: 1,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: FloatingActionButton(
+              elevation: 0,
+              backgroundColor: ColoresApp.acentoPrimario,
+              foregroundColor: Colors.white,
+              shape: const CircleBorder(),
+              tooltip: 'Abrir archivo de video',
+              onPressed: _abrirSelectorManual,
+              child: const Icon(Icons.folder_open_rounded, size: 24),
+            ),
           ),
         ),
         bottomNavigationBar: NavigationBar(
@@ -450,6 +468,7 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

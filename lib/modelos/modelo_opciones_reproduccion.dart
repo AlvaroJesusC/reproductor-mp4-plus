@@ -11,7 +11,7 @@ enum ModoRelacionAspecto {
 }
 
 /// Estado de los gestos táctiles en pantalla (OSD).
-enum TipoGestoOSD { ninguno, brillo, volumen, posicionTiempo }
+enum TipoGestoOSD { ninguno, brillo, volumen, posicionTiempo, zoom }
 
 /// Estado reactivo exclusivo para el avance y scrubber de la barra de progreso.
 class EstadoProgresoReproductor {

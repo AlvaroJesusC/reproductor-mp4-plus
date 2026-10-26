@@ -14,6 +14,7 @@ class IndicadorGestoOSD extends StatelessWidget {
   final int diferenciaSegundos; // Para seek (+15s, -10s, +90s)
   final int posicionObjetivoMs; // Tiempo resultante
   final int duracionTotalMs;
+  final double porcentajeZoom;
 
   const IndicadorGestoOSD({
     super.key,
@@ -22,6 +23,7 @@ class IndicadorGestoOSD extends StatelessWidget {
     this.diferenciaSegundos = 0,
     this.posicionObjetivoMs = 0,
     this.duracionTotalMs = 0,
+    this.porcentajeZoom = 1.0,
   });
 
   @override
@@ -72,7 +74,62 @@ class IndicadorGestoOSD extends StatelessWidget {
             child: _construirContenidoTiempo(),
           ),
         );
+
+      case TipoGestoOSD.zoom:
+        return _construirPastillaZoom(context);
     }
+  }
+
+  /// Pastilla OSD flotante superior para el zoom multitáctil (🔍 145%).
+  Widget _construirPastillaZoom(BuildContext context) {
+    final insets = MediaQuery.paddingOf(context);
+    final porcentajeEntero = (porcentajeZoom * 100).round();
+    final esOriginal = porcentajeEntero <= 100;
+
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Padding(
+        padding: EdgeInsets.only(top: insets.top + 28),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+          decoration: BoxDecoration(
+            color: ColoresApp.fondoOSD,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: ColoresApp.bordeOSD,
+              width: 1.0,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 14,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                esOriginal ? Icons.zoom_out_map_rounded : Icons.zoom_in_rounded,
+                color: esOriginal ? Colors.white70 : ColoresApp.acentoPrimario,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                esOriginal ? 'Ajuste Original (100%)' : '🔍 $porcentajeEntero%',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// Cápsula vertical delgada y translúcida para los bordes laterales de la pantalla.

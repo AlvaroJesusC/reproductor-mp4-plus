@@ -10,6 +10,8 @@
 
 | Tarea / Dominio | Skill(s) Obligatoria(s) en `.agent/skills/` |
 | :--- | :--- |
+| **Picture-in-Picture (PiP Android y Mini-reproductor Flotante In-App)** | `video-picture-in-picture` |
+| **Zoom y Paneo Multitáctil (Pinch to Zoom 1.0x-5.0x a 144Hz)** | `video-pinch-to-zoom` |
 | **Rendimiento Extremo, Modo 144Hz Turbo y Reproducción Instantánea** | `extreme-multimedia-performance` |
 | **Lavado de Cara, Rediseño Cinemático y Anti-AI-Slop** | `cinematic-ui-facelift` |
 | **Rendimiento, 60/120/144 FPS, Scrubber/Timeline sin Jank, Isolates** | `flutter-performance` |
