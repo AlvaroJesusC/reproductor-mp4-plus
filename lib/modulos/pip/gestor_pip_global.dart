@@ -6,6 +6,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../../modelos/modelo_video.dart';
 import '../../pantallas/pantalla_reproductor.dart';
 import '../../servicios/servicio_preferencias.dart';
+import 'servicio_pip_nativo.dart';
 
 /// Estados posibles del ciclo de vida del Picture-in-Picture.
 enum EstadoPip {
@@ -19,7 +20,30 @@ enum EstadoPip {
 /// (Mini-reproductor in-app y PiP de Android) sin recargas ni jank a 144 FPS.
 class GestorPipGlobal {
   static final GestorPipGlobal instancia = GestorPipGlobal._interno();
-  GestorPipGlobal._interno();
+
+  GestorPipGlobal._interno() {
+    ServicioPipNativo.streamEstadoPip.listen((estadoAndroid) {
+      if (estadoAndroid == EstadoPipAndroid.enabled) {
+        if (estadoPip.value != EstadoPip.cerrado) {
+          _estadoPrevioAlPip = estadoPip.value;
+          estadoPip.value = EstadoPip.pipNativoSistema;
+        }
+      } else {
+        if (estadoPip.value == EstadoPip.pipNativoSistema) {
+          // El usuario expandió la ventana flotante PiP de vuelta a la app:
+          // Restauramos el estado previo sin destruir ni pausar la reproducción.
+          estadoPip.value = _estadoPrevioAlPip;
+        }
+      }
+    });
+
+    // Solo cerrar y liberar recursos si el usuario descartó la ventana PiP desde Android
+    ServicioPipNativo.streamCierrePip.listen((_) {
+      unawaited(cerrar());
+    });
+  }
+
+  EstadoPip _estadoPrevioAlPip = EstadoPip.reproductorCompleto;
 
   /// Estado actual del Picture-in-Picture.
   final ValueNotifier<EstadoPip> estadoPip = ValueNotifier(EstadoPip.cerrado);
@@ -66,7 +90,25 @@ class GestorPipGlobal {
     estaReproduciendo.value = reproductor.state.playing;
     _subscripcionPlaying = reproductor.stream.playing.listen((reproduciendo) {
       estaReproduciendo.value = reproduciendo;
+      final w = reproductor.state.width ?? 16;
+      final h = reproductor.state.height ?? 9;
+      unawaited(
+        ServicioPipNativo.configurarAutoPip(
+          reproduciendo,
+          ancho: w,
+          alto: h,
+        ),
+      );
     });
+    final w = reproductor.state.width ?? 16;
+    final h = reproductor.state.height ?? 9;
+    unawaited(
+      ServicioPipNativo.configurarAutoPip(
+        reproductor.state.playing,
+        ancho: w,
+        alto: h,
+      ),
+    );
 
     _subscripcionPosition?.cancel();
     _subscripcionPosition = reproductor.stream.position.listen((pos) {
@@ -139,6 +181,7 @@ class GestorPipGlobal {
     _subscripcionPlaying = null;
     _subscripcionPosition?.cancel();
     _subscripcionPosition = null;
+    unawaited(ServicioPipNativo.configurarAutoPip(false));
 
     final playerADispose = reproductor;
     reproductor = null;

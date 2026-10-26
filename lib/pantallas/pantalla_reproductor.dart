@@ -114,6 +114,7 @@ enum _ModoGestoTactil {
   seek,
   panConUnDedo,
   zoomYPaneoMultitactil,
+  minimizarDeslizando,
 }
 
 class _PantallaReproductorState extends State<PantallaReproductor>
@@ -133,6 +134,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   /// Control reactivo de la opacidad del filtro de atenuación nocturna (sub-cero).
   final ValueNotifier<double> _opacidadFiltroNoche = ValueNotifier(0.0);
 
+  /// Desplazamiento cinemático vertical para minimizar al mini-reproductor estilo YouTube
+  final ValueNotifier<double> _offsetDeslizamientoMinimizar = ValueNotifier(0.0);
+  AnimationController? _controladorAnimacionMinimizar;
+
   // Video actual y playlist
   late ModeloVideo _videoActual;
   late List<ModeloVideo> _playlist;
@@ -146,6 +151,8 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   bool _reintentadoConSoftware = false;
   bool _estaSaliendo = false;
   StreamSubscription<PiPStatus>? _subscripcionPipNativo;
+  StreamSubscription<void>? _subscripcionCierrePipNativo;
+  Timer? _temporizadorPausaSegundoPlano;
 
   // Reproducción automática del siguiente video (Autoplay estilo YouTube)
   bool _reproduccionAutomatica = true;
@@ -238,14 +245,31 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       }
     });
 
-    // Escuchar cambios de estado en PiP nativo de Android para ocultar controles
+    // Escuchar cambios de estado en PiP nativo de Android para ocultar controles o restaurarlos
     _subscripcionPipNativo = ServicioPipNativo.streamEstadoPip.listen((status) {
       if (!mounted) return;
-      if (status == PiPStatus.enabled) {
-        setState(() {
+      _temporizadorPausaSegundoPlano?.cancel();
+      _temporizadorPausaSegundoPlano = null;
+
+      setState(() {
+        if (status == PiPStatus.enabled) {
           _mostrarControles = false;
-        });
+        } else {
+          // Al expandir de PiP al reproductor completo, continuar reproduciendo fluidamente
+          _mostrarControles = true;
+          _reiniciarTemporizadorOcultarControles();
+        }
+      });
+      _sincronizarModoBarrasSistema();
+    });
+
+    _subscripcionCierrePipNativo =
+        ServicioPipNativo.streamCierrePip.listen((_) {
+      if (!mounted) return;
+      if (_estaInicializado && _reproductor.state.playing) {
+        _reproductor.pause();
       }
+      _guardarProgresoInmediato();
     });
 
     _configurarModoInmersivo();
@@ -255,7 +279,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   /// Configura pantalla completa inmersiva permitiendo orientación natural.
   Future<void> _configurarModoInmersivo() async {
-    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _sincronizarModoBarrasSistema();
     // Orientación libre al abrir: el reproductor se adapta a cualquier posición
     // en que se sostenga el teléfono (vertical u horizontal) y rota con los sensores.
     await SystemChrome.setPreferredOrientations([
@@ -649,14 +673,42 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      _guardarProgresoInmediato();
-      if (!ServicioPipNativo.estaEnPip) {
-        if (_estaInicializado && _reproductor.state.playing) {
-          _reproductor.pause();
+    switch (state) {
+      case AppLifecycleState.resumed:
+        _temporizadorPausaSegundoPlano?.cancel();
+        _temporizadorPausaSegundoPlano = null;
+        break;
+
+      case AppLifecycleState.inactive:
+        // IMPORTANTE: Al bajar la barra de notificaciones, abrir ajustes rápidos,
+        // panel de volumen o iniciar gestos del sistema, Android emite 'inactive'.
+        // NUNCA pausar el video aquí para permitir reproducción ininterrumpida
+        // y permitir que el sistema transicione a PiP sin cortar el flujo.
+        break;
+
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+        _guardarProgresoInmediato();
+        // Si no está en PiP, dar una ventana de gracia para permitir la transición a PiP del sistema.
+        // Si tras la ventana de gracia sigue en segundo plano y NO está en PiP (ej: pantalla bloqueada),
+        // pausar para ahorrar batería y detener el audio.
+        _temporizadorPausaSegundoPlano?.cancel();
+        if (!ServicioPipNativo.estaEnPip) {
+          _temporizadorPausaSegundoPlano =
+              Timer(const Duration(milliseconds: 700), () {
+            if (!mounted) return;
+            if (!ServicioPipNativo.estaEnPip &&
+                _estaInicializado &&
+                _reproductor.state.playing) {
+              _reproductor.pause();
+            }
+          });
         }
-      }
+        break;
+
+      case AppLifecycleState.detached:
+        _guardarProgresoInmediato();
+        break;
     }
   }
 
@@ -715,6 +767,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     unawaited(
       SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
     );
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.edgeToEdge,
+        overlays: SystemUiOverlay.values,
+      ),
+    );
 
     // Cerrar en este mismo frame. `abrir` restaurará barras y orientación
     // después de que la biblioteca vuelva a estar completamente visible.
@@ -739,6 +797,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     unawaited(WakelockPlus.disable());
     unawaited(
       SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+    );
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.edgeToEdge,
+        overlays: SystemUiOverlay.values,
+      ),
     );
 
     // Registrar y ceder el reproductor al gestor global sin destruirlo
@@ -868,8 +932,38 @@ class _PantallaReproductorState extends State<PantallaReproductor>
           setState(() {
             _mostrarControles = false;
           });
+          _sincronizarModoBarrasSistema();
         }
       });
+    }
+  }
+
+  /// Sincroniza las barras del sistema (notificaciones superior y navegación inferior)
+  /// con la visibilidad de los controles.
+  /// Si los controles son visibles, muestra ambas barras del sistema (hora, batería y navegación).
+  /// Si los controles se ocultan, entra en inmersión total ocultando ambas barras.
+  void _sincronizarModoBarrasSistema() {
+    if (_estaSaliendo || ServicioPipNativo.estaEnPip) return;
+
+    if (_mostrarControles && !_pantallaBloqueada) {
+      // Mostrar tanto la barra de notificaciones superior como la barra de navegación inferior
+      // mientras la interfaz de controles esté visible en pantalla
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.edgeToEdge,
+        overlays: SystemUiOverlay.values,
+      );
+      SystemChrome.setSystemUIOverlayStyle(
+        const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+          systemNavigationBarColor: Colors.transparent,
+          systemNavigationBarIconBrightness: Brightness.light,
+        ),
+      );
+    } else {
+      // Ocultar ambas barras en modo inmersivo completo para máxima inmersión visual
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     }
   }
 
@@ -910,6 +1004,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     setState(() {
       _mostrarControles = !_mostrarControles;
     });
+    _sincronizarModoBarrasSistema();
     if (_mostrarControles) {
       _sincronizarEstadoInterfaz();
       _reiniciarTemporizadorOcultarControles();
@@ -1001,6 +1096,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       _mostrarControles = !nuevoEstadoBloqueado;
       _mostrarBotonDesbloqueo = nuevoEstadoBloqueado;
     });
+    _sincronizarModoBarrasSistema();
 
     if (nuevoEstadoBloqueado) {
       _reiniciarTemporizadorBotonDesbloqueo();
@@ -1738,13 +1834,24 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       return;
     }
 
-    // 3. 1 dedo en modo normal (zoom 1.0x) -> Brillo, Volumen o Seek
+    // 3. 1 dedo en modo normal (zoom 1.0x) -> Deslizar para minimizar, Brillo, Volumen o Seek
     if (_modoGestoActivo == _ModoGestoTactil.indeterminado) {
       final dx = details.localFocalPoint.dx - _focalInicial.dx;
       final dy = details.localFocalPoint.dy - _focalInicial.dy;
 
       if (dx.abs() > 10.0 || dy.abs() > 10.0) {
-        if (dy.abs() > dx.abs()) {
+        // Deslizamiento hacia abajo para minimizar estilo YouTube:
+        // Se activa con arrastre hacia abajo predominante iniciando en la zona superior o franja central.
+        final esHaciaAbajo = dy > 12.0 && dy > (dx.abs() * 1.1);
+        final enZonaSuperior = _focalInicial.dy < (constraints.maxHeight * 0.40);
+        final enFranjaCentral = _focalInicial.dx >= (constraints.maxWidth * 0.25) &&
+            _focalInicial.dx <= (constraints.maxWidth * 0.75);
+
+        if (esHaciaAbajo && (enZonaSuperior || enFranjaCentral)) {
+          _modoGestoActivo = _ModoGestoTactil.minimizarDeslizando;
+          _tipoGestoActual = TipoGestoOSD.ninguno;
+          _notificarCambioOSD();
+        } else if (dy.abs() > dx.abs()) {
           final esLadoIzquierdo =
               _focalInicial.dx < (constraints.maxWidth / 2.0);
           if (esLadoIzquierdo) {
@@ -1769,6 +1876,13 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       } else {
         return;
       }
+    }
+
+    if (_modoGestoActivo == _ModoGestoTactil.minimizarDeslizando) {
+      final deltaY = (details.localFocalPoint.dy - _focalInicial.dy)
+          .clamp(0.0, constraints.maxHeight);
+      _offsetDeslizamientoMinimizar.value = deltaY;
+      return;
     }
 
     if (_modoGestoActivo == _ModoGestoTactil.brillo) {
@@ -1821,6 +1935,20 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   }
 
   Future<void> _alFinalizarEscala(ScaleEndDetails details) async {
+    if (_modoGestoActivo == _ModoGestoTactil.minimizarDeslizando) {
+      final desplazamientoY = _offsetDeslizamientoMinimizar.value;
+      final velocidadY = details.velocity.pixelsPerSecond.dy;
+      if (desplazamientoY > 110.0 || velocidadY > 800.0) {
+        final altura = MediaQuery.sizeOf(context).height;
+        _animarYCompletarMinimizacion(altura);
+      } else {
+        _animarCancelacionMinimizacion();
+      }
+      _modoGestoActivo = _ModoGestoTactil.ninguno;
+      _programarOcultarOSD();
+      return;
+    }
+
     if (_modoGestoActivo == _ModoGestoTactil.seek) {
       _arrastrandoScrubber = false;
       await _reproductor.seek(Duration(milliseconds: _posicionSeekArrastreMs));
@@ -1829,6 +1957,44 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
     _modoGestoActivo = _ModoGestoTactil.ninguno;
     _programarOcultarOSD();
+  }
+
+  void _animarYCompletarMinimizacion(double alturaMaxima) {
+    _controladorAnimacionMinimizar?.dispose();
+    final controlador = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _controladorAnimacionMinimizar = controlador;
+    final inicio = _offsetDeslizamientoMinimizar.value;
+    final animacion = Tween<double>(begin: inicio, end: alturaMaxima).animate(
+      CurvedAnimation(parent: controlador, curve: Curves.easeInCubic),
+    );
+    animacion.addListener(() {
+      _offsetDeslizamientoMinimizar.value = animacion.value;
+    });
+    controlador.forward().then((_) {
+      if (mounted && !_estaSaliendo) {
+        _minimizarAPip();
+      }
+    });
+  }
+
+  void _animarCancelacionMinimizacion() {
+    _controladorAnimacionMinimizar?.dispose();
+    final controlador = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    );
+    _controladorAnimacionMinimizar = controlador;
+    final inicio = _offsetDeslizamientoMinimizar.value;
+    final animacion = Tween<double>(begin: inicio, end: 0.0).animate(
+      CurvedAnimation(parent: controlador, curve: Curves.easeOutCubic),
+    );
+    animacion.addListener(() {
+      _offsetDeslizamientoMinimizar.value = animacion.value;
+    });
+    controlador.forward();
   }
 
   void _mostrarOSDSeek(int seg, int posObjetivoMs) {
@@ -1869,7 +2035,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   @override
   void dispose() {
+    _temporizadorPausaSegundoPlano?.cancel();
     _subscripcionPipNativo?.cancel();
+    _subscripcionCierrePipNativo?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _temporizadorOcultarControles?.cancel();
     _temporizadorOcultarOSD?.cancel();
@@ -1881,6 +2049,8 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       s.cancel();
     }
     _controladorAnimacionResetZoom?.dispose();
+    _controladorAnimacionMinimizar?.dispose();
+    _offsetDeslizamientoMinimizar.dispose();
     _matrizTransformacionZoom.dispose();
     _nivelZoomNotifier.dispose();
     _estadoProgreso.dispose();
@@ -1894,6 +2064,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     } catch (_) {}
     WakelockPlus.disable();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.edgeToEdge,
+        overlays: SystemUiOverlay.values,
+      ),
+    );
 
     // Si el reproductor fue cedido al PiP, se mantiene vivo para el mini-reproductor
     if (_reproductorCreado && !_reproductorCedidoAlPip) {
@@ -1985,6 +2161,20 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     final esHorizontal =
         MediaQuery.orientationOf(context) == Orientation.landscape;
 
+    // Si la aplicación se encuentra en modo Picture-in-Picture nativo del sistema Android,
+    // renderizar ÚNICAMENTE el video puro y limpio sin barras de interfaz, controles ni gestos.
+    if (ServicioPipNativo.estaEnPip && _estaInicializado) {
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: _LienzoVideo(
+            controlador: _controladorVideo,
+            aspecto: ModoRelacionAspecto.ajustar,
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: LayoutBuilder(
@@ -2009,7 +2199,28 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             onScaleUpdate: (details) =>
                 _alActualizarEscala(details, constraints),
             onScaleEnd: _alFinalizarEscala,
-            child: Stack(
+            child: ValueListenableBuilder<double>(
+              valueListenable: _offsetDeslizamientoMinimizar,
+              builder: (context, offsetY, child) {
+                if (offsetY <= 0.0) return child!;
+                final progreso =
+                    (offsetY / constraints.maxHeight).clamp(0.0, 1.0);
+                final escala =
+                    (1.0 - (progreso * 0.40)).clamp(0.55, 1.0);
+                return Transform.translate(
+                  offset: Offset(0, offsetY),
+                  child: Transform.scale(
+                    scale: escala,
+                    alignment: Alignment.topCenter,
+                    child: ClipRRect(
+                      borderRadius:
+                          BorderRadius.circular(progreso * 24.0),
+                      child: child,
+                    ),
+                  ),
+                );
+              },
+              child: Stack(
               fit: StackFit.expand,
               children: [
                 // 1. RENDERIZADO DEL VIDEO NATIVO CON MEDIA_KIT (LIBMPV) AISLADO CON TRANSFORM
@@ -2197,10 +2408,11 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                   ),
               ],
             ),
-          );
-        },
-      ),
-    );
+          ),
+        );
+      },
+    ),
+  );
   }
 
   /// Botón de desbloqueo que se oculta o muestra al tocar en cualquier parte de la pantalla.

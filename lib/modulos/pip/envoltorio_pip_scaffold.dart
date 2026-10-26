@@ -1,10 +1,15 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import 'gestor_pip_global.dart';
 import 'mini_reproductor_flotante.dart';
+import 'servicio_pip_nativo.dart';
 
 /// Envoltorio reactivo de alto rendimiento para PantallaPrincipal.
 /// Superpone el Mini-Reproductor Flotante in-app tipo YouTube justo encima
 /// del NavigationBar con animación fluida a 144 FPS y cero rebuilds de listas.
+/// Además, en modo Picture-in-Picture nativo del sistema Android, reemplaza
+/// limpiamente la interfaz por el lienzo de video puro a pantalla completa.
 class EnvoltorioPipScaffold extends StatefulWidget {
   final Widget child;
 
@@ -18,6 +23,8 @@ class _EnvoltorioPipScaffoldState extends State<EnvoltorioPipScaffold>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controladorAnimacion;
   late final Animation<Offset> _animacionSlide;
+  StreamSubscription<PiPStatus>? _subscripcionPip;
+  bool _estaEnPip = ServicioPipNativo.estaEnPip;
 
   @override
   void initState() {
@@ -42,6 +49,19 @@ class _EnvoltorioPipScaffoldState extends State<EnvoltorioPipScaffold>
     if (GestorPipGlobal.instancia.estaMinimizado) {
       _controladorAnimacion.value = 1.0;
     }
+
+    _subscripcionPip = ServicioPipNativo.streamEstadoPip.listen((status) {
+      if (!mounted) return;
+      final enPip = status == PiPStatus.enabled;
+      setState(() {
+        _estaEnPip = enPip;
+      });
+      if (!enPip && GestorPipGlobal.instancia.estaActivo) {
+        // Al tocar el botón de expandir en la ventana PiP de Android, expandir de inmediato
+        // a pantalla completa para continuar disfrutando del video sin cortes
+        unawaited(GestorPipGlobal.instancia.expandir(context));
+      }
+    });
   }
 
   void _alCambiarEstadoPip() {
@@ -55,6 +75,7 @@ class _EnvoltorioPipScaffoldState extends State<EnvoltorioPipScaffold>
 
   @override
   void dispose() {
+    _subscripcionPip?.cancel();
     GestorPipGlobal.instancia.estadoPip.removeListener(_alCambiarEstadoPip);
     _controladorAnimacion.dispose();
     super.dispose();
@@ -62,6 +83,24 @@ class _EnvoltorioPipScaffoldState extends State<EnvoltorioPipScaffold>
 
   @override
   Widget build(BuildContext context) {
+    // Si estamos en modo PiP de Android (ventana flotante del sistema),
+    // mostramos ÚNICAMENTE el video limpio a pantalla completa dentro de la ventana PiP,
+    // eliminando por completo cualquier fuga de interfaz (barras de navegación, pestañas, etc.)
+    if (_estaEnPip &&
+        GestorPipGlobal.instancia.estaActivo &&
+        GestorPipGlobal.instancia.controladorVideo != null) {
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: Video(
+            controller: GestorPipGlobal.instancia.controladorVideo!,
+            controls: NoVideoControls,
+            fit: BoxFit.contain,
+          ),
+        ),
+      );
+    }
+
     final insets = MediaQuery.paddingOf(context);
     // Posicionado justo encima de la barra de navegación NavigationBar (80px en M3 + padding)
     final separacionInferior = insets.bottom + 86.0;
