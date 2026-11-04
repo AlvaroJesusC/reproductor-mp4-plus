@@ -72,9 +72,7 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
   @override
   void didUpdateWidget(covariant PestanaTodosLosVideos oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.videos, widget.videos)) {
-      _videosVisibles = _calcularVideosVisibles();
-    }
+    _videosVisibles = _calcularVideosVisibles();
   }
 
   @override
@@ -508,12 +506,17 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                                         indiceInicial: index,
                                       );
                                       widget.alActualizar();
+                                      _actualizarVideosVisibles();
                                     },
                                     alAlternarFavorito: () {
                                       widget.alActualizar();
                                       _actualizarVideosVisibles();
                                     },
                                     alReiniciarProgreso: () {
+                                      widget.alActualizar();
+                                      _actualizarVideosVisibles();
+                                    },
+                                    alActualizar: () {
                                       widget.alActualizar();
                                       _actualizarVideosVisibles();
                                     },
@@ -552,6 +555,10 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                                   _actualizarVideosVisibles();
                                 },
                                 alReiniciarProgreso: () {
+                                  widget.alActualizar();
+                                  _actualizarVideosVisibles();
+                                },
+                                alActualizar: () {
                                   widget.alActualizar();
                                   _actualizarVideosVisibles();
                                 },

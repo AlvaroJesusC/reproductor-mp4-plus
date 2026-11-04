@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import '../../constantes/colores_app.dart';
 import '../../modelos/modelo_video.dart';
 import '../../servicios/servicio_miniaturas_video.dart';
-import '../../servicios/servicio_preferencias.dart';
 import '../../widgets/tarjeta_video.dart';
 import '../pantalla_reproductor.dart';
 
@@ -133,12 +132,9 @@ class PestanaRecientes extends StatelessWidget {
                   );
                   alActualizar();
                 },
-                alReiniciarProgreso: () async {
-                  await ServicioPreferencias.borrarProgresoVideo(video.ruta);
-                  video.posicionGuardadaMs = 0;
-                  alActualizar();
-                },
+                alReiniciarProgreso: alActualizar,
                 alAlternarFavorito: alActualizar,
+                alActualizar: alActualizar,
               ),
             );
           }),

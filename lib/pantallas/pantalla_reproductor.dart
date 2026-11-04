@@ -45,6 +45,9 @@ class PantallaReproductor extends StatefulWidget {
     this.controladorExistente,
   });
 
+  /// Future del último guardado de progreso o completado en SharedPreferences al salir
+  static Future<void>? ultimoGuardadoFuture;
+
   /// Abre el reproductor y restaura la interfaz después de revelar la biblioteca.
   static Future<void> abrir(
     BuildContext context,
@@ -90,6 +93,14 @@ class PantallaReproductor extends StatefulWidget {
         reverseTransitionDuration: Duration.zero,
       ),
     );
+
+    // Esperar a que el guardado en SharedPreferences finalice antes de devolver el control a la biblioteca
+    if (ultimoGuardadoFuture != null) {
+      try {
+        await ultimoGuardadoFuture;
+      } catch (_) {}
+      ultimoGuardadoFuture = null;
+    }
 
     if (!context.mounted) return;
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
@@ -408,19 +419,35 @@ class _PantallaReproductorState extends State<PantallaReproductor>
           }
         }
 
-        final videoCompletado = _esVideoCompletado(posMs, durMs);
+        final videoCompletado =
+            _reproductor.state.completed || _esVideoCompletado(posMs, durMs);
         if (_reanudacionAplicada) {
           if (videoCompletado) {
             _videoActual.estaCompletado = true;
             _videoActual.posicionGuardadaMs = 0;
+            if (!_progresoFinalizadoLimpiado) {
+              _progresoFinalizadoLimpiado = true;
+              unawaited(
+                ServicioPreferencias.marcarVideoCompletado(
+                  _videoActual.ruta,
+                  duracionTotalMs: durMs,
+                  completado: true,
+                ),
+              );
+            }
           } else {
-            _videoActual.estaCompletado = false;
-            _videoActual.posicionGuardadaMs = posMs;
+            // Solo desmarca completado si el usuario rebobina antes del 90% intencionalmente
+            if (!_videoActual.estaCompletado ||
+                (durMs > 0 &&
+                    posMs < durMs * 0.90 &&
+                    posMs > 0 &&
+                    !_reproductor.state.completed)) {
+              _videoActual.estaCompletado = false;
+              _videoActual.posicionGuardadaMs = posMs;
+              _progresoFinalizadoLimpiado = false;
+            }
           }
           _videoActual.duracionTotalMs = durMs;
-          if (!videoCompletado) {
-            _progresoFinalizadoLimpiado = false;
-          }
         }
 
         if (_mostrarControles) {
@@ -441,21 +468,26 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             ahora - _ultimoGuardadoTimestamp >= 5000 &&
             _reproductor.state.playing) {
           _ultimoGuardadoTimestamp = ahora;
-          if (videoCompletado) {
+          if (videoCompletado || _videoActual.estaCompletado) {
             if (!_progresoFinalizadoLimpiado) {
               _progresoFinalizadoLimpiado = true;
               _videoActual.estaCompletado = true;
-              ServicioPreferencias.marcarVideoCompletado(
-                _videoActual.ruta,
-                duracionTotalMs: durMs,
-                completado: true,
+              _videoActual.posicionGuardadaMs = 0;
+              unawaited(
+                ServicioPreferencias.marcarVideoCompletado(
+                  _videoActual.ruta,
+                  duracionTotalMs: durMs,
+                  completado: true,
+                ),
               );
             }
-          } else {
-            ServicioPreferencias.guardarProgresoVideo(
-              rutaVideo: _videoActual.ruta,
-              posicionMs: posMs,
-              duracionTotalMs: durMs,
+          } else if (!_videoActual.estaCompletado && posMs > 5000) {
+            unawaited(
+              ServicioPreferencias.guardarProgresoVideo(
+                rutaVideo: _videoActual.ruta,
+                posicionMs: posMs,
+                duracionTotalMs: durMs,
+              ),
             );
           }
         }
@@ -464,13 +496,13 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
     // 2. Escuchar fin de video y estado de reproducción
     _suscripciones.add(
-      _reproductor.stream.completed.listen((completado) {
+      _reproductor.stream.completed.listen((completado) async {
         if (!mounted || _estaSaliendo || !completado) return;
         final durMs = _reproductor.state.duration.inMilliseconds;
         _videoActual.estaCompletado = true;
         _videoActual.posicionGuardadaMs = 0;
         _progresoFinalizadoLimpiado = true;
-        ServicioPreferencias.marcarVideoCompletado(
+        await ServicioPreferencias.marcarVideoCompletado(
           _videoActual.ruta,
           duracionTotalMs: durMs,
           completado: true,
@@ -713,7 +745,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   }
 
   bool _esVideoCompletado(int posicionMs, int duracionMs) {
-    return duracionMs > 0 && posicionMs >= (duracionMs * 0.95);
+    if (duracionMs <= 0) return false;
+    return posicionMs >= (duracionMs * 0.95) ||
+        (duracionMs - posicionMs <= 4000);
   }
 
   Future<void> _guardarProgresoInmediato() async {
@@ -721,7 +755,11 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
     final posMs = _reproductor.state.position.inMilliseconds;
     final durMs = _reproductor.state.duration.inMilliseconds;
-    if (_esVideoCompletado(posMs, durMs)) {
+    final esCompletado = _videoActual.estaCompletado ||
+        _reproductor.state.completed ||
+        _esVideoCompletado(posMs, durMs);
+
+    if (esCompletado) {
       _videoActual.posicionGuardadaMs = 0;
       _videoActual.estaCompletado = true;
       _progresoFinalizadoLimpiado = true;
@@ -751,13 +789,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _estaSaliendo = true;
     _cancelarCuentaRegresivaAutoplay();
 
-    // Cerrar sesión en PiP si el usuario cerró el reproductor completamente
-    unawaited(GestorPipGlobal.instancia.cerrar());
+    // Cerrar sesión en PiP si el usuario cerró el reproductor completamente (sin sobreescribir progreso)
+    unawaited(GestorPipGlobal.instancia.cerrar(guardarProgreso: false));
 
     // La posición y duración se capturan antes del primer await del guardado.
-    // La escritura continúa en segundo plano sin retrasar el cierre de la ruta.
     if (_estaInicializado) {
-      unawaited(_guardarProgresoInmediato());
+      PantallaReproductor.ultimoGuardadoFuture = _guardarProgresoInmediato();
     }
 
     try {
@@ -789,7 +826,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
     _estaSaliendo = true;
     _cancelarCuentaRegresivaAutoplay();
-    unawaited(_guardarProgresoInmediato());
+    PantallaReproductor.ultimoGuardadoFuture = _guardarProgresoInmediato();
 
     try {
       unawaited(ScreenBrightness.instance.resetApplicationScreenBrightness());
@@ -2092,7 +2129,13 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             _alternarBloqueo();
             return;
           }
-          if (_estaInicializado && !_tieneError) {
+          final esCompletado = _videoActual.estaCompletado ||
+              _reproductor.state.completed ||
+              _esVideoCompletado(
+                _reproductor.state.position.inMilliseconds,
+                _reproductor.state.duration.inMilliseconds,
+              );
+          if (_estaInicializado && !_tieneError && !esCompletado) {
             _minimizarAPip();
           } else {
             _manejarSalida();
@@ -2327,9 +2370,19 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                         alIniciarCambioProgreso: _iniciarCambioProgreso,
                         alCambiarProgreso: _cambiarProgreso,
                         alFinalizarCambioProgreso: _finalizarCambioProgreso,
-                        alRegresar: () => (_estaInicializado && !_tieneError)
-                            ? _minimizarAPip()
-                            : _manejarSalida(),
+                        alRegresar: () {
+                          final esCompletado = _videoActual.estaCompletado ||
+                              _reproductor.state.completed ||
+                              _esVideoCompletado(
+                                _reproductor.state.position.inMilliseconds,
+                                _reproductor.state.duration.inMilliseconds,
+                              );
+                          if (_estaInicializado && !_tieneError && !esCompletado) {
+                            _minimizarAPip();
+                          } else {
+                            _manejarSalida();
+                          }
+                        },
                         alMinimizar: () => (_estaInicializado && !_tieneError)
                             ? _minimizarAPip()
                             : null,

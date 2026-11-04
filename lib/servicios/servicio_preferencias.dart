@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../modelos/modelo_video.dart';
 
@@ -12,6 +13,11 @@ class ServicioPreferencias {
 
   // Caché de la instancia de SharedPreferences para evitar llamadas repetidas a disco
   static SharedPreferences? _instanciaPrefs;
+
+  @visibleForTesting
+  static void reiniciarInstanciaParaPruebas() {
+    _instanciaPrefs = null;
+  }
 
   static Future<SharedPreferences> _obtenerInstancia() async {
     _instanciaPrefs ??= await SharedPreferences.getInstance();
@@ -128,9 +134,10 @@ class ServicioPreferencias {
       video.estaCompletado = completados.contains(video.ruta);
       video.esFavorito = favoritos.contains(video.ruta);
 
-      final pos = prefs.getInt('pos_${video.ruta}');
-      if (pos != null && pos > 0) {
-        video.posicionGuardadaMs = pos;
+      if (video.estaCompletado) {
+        video.posicionGuardadaMs = 0;
+      } else {
+        video.posicionGuardadaMs = prefs.getInt('pos_${video.ruta}') ?? 0;
       }
       final dur = prefs.getInt('dur_${video.ruta}');
       if (dur != null && dur > 0) {
@@ -253,6 +260,7 @@ class ServicioPreferencias {
       }
     } else {
       completados.remove(rutaVideo);
+      await prefs.remove('pos_$rutaVideo');
     }
     await prefs.setString(
       _prefClaveCompletados,
@@ -305,10 +313,13 @@ class ServicioPreferencias {
           final favoritos = await obtenerFavoritos();
           final completados = await obtenerCompletados();
           return dec.map((item) {
-            final video = ModeloVideo.desdeMapa(item as Map<String, dynamic>);
+            final mapa = Map<String, dynamic>.from(item as Map);
+            final video = ModeloVideo.desdeMapa(mapa);
             video.esFavorito = favoritos.contains(video.ruta);
-            video.estaCompletado =
-                completados.contains(video.ruta) || video.estaCompletado;
+            video.estaCompletado = completados.contains(video.ruta);
+            if (video.estaCompletado) {
+              video.posicionGuardadaMs = 0;
+            }
             return video;
           }).toList();
         }

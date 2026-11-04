@@ -15,6 +15,7 @@ class TarjetaVideo extends StatelessWidget {
   final VoidCallback alPresionar;
   final VoidCallback? alReiniciarProgreso;
   final VoidCallback? alAlternarFavorito;
+  final VoidCallback? alActualizar;
 
   const TarjetaVideo({
     super.key,
@@ -22,6 +23,7 @@ class TarjetaVideo extends StatelessWidget {
     required this.alPresionar,
     this.alReiniciarProgreso,
     this.alAlternarFavorito,
+    this.alActualizar,
   });
 
   @override
@@ -261,26 +263,26 @@ class TarjetaVideo extends StatelessWidget {
                   );
                   video.esFavorito = nuevo;
                   alAlternarFavorito?.call();
+                  alActualizar?.call();
                 } else if (opcion == 'marcar_visto') {
                   final nuevo = await ServicioPreferencias.alternarCompletado(
                     video.ruta,
                     duracionTotalMs: video.duracionTotalMs,
                   );
                   video.estaCompletado = nuevo;
-                  if (nuevo) {
-                    video.posicionGuardadaMs = 0;
-                  }
+                  video.posicionGuardadaMs = 0;
+                  alActualizar?.call();
                   alReiniciarProgreso?.call();
                 } else if (opcion == 'info') {
                   if (context.mounted) {
                     DialogoInformacionVideo.mostrar(context, video);
                   }
-                } else if (opcion == 'reiniciar' &&
-                    alReiniciarProgreso != null) {
+                } else if (opcion == 'reiniciar') {
                   await ServicioPreferencias.borrarProgresoVideo(video.ruta);
                   video.posicionGuardadaMs = 0;
                   video.estaCompletado = false;
-                  alReiniciarProgreso!();
+                  alActualizar?.call();
+                  alReiniciarProgreso?.call();
                 } else if (opcion == 'copiar_ruta') {
                   Clipboard.setData(ClipboardData(text: video.ruta));
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -452,6 +454,7 @@ class TarjetaVideoCuadricula extends StatelessWidget {
   final VoidCallback alPresionar;
   final VoidCallback? alReiniciarProgreso;
   final VoidCallback? alAlternarFavorito;
+  final VoidCallback? alActualizar;
 
   const TarjetaVideoCuadricula({
     super.key,
@@ -459,6 +462,7 @@ class TarjetaVideoCuadricula extends StatelessWidget {
     required this.alPresionar,
     this.alReiniciarProgreso,
     this.alAlternarFavorito,
+    this.alActualizar,
   });
 
   @override
@@ -626,19 +630,165 @@ class TarjetaVideoCuadricula extends StatelessWidget {
                               : FontWeight.normal,
                         ),
                       ),
-                      InkWell(
-                        onTap: () {
-                          DialogoInformacionVideo.mostrar(context, video);
-                        },
-                        borderRadius: BorderRadius.circular(10),
-                        child: const Padding(
-                          padding: EdgeInsets.all(2),
-                          child: Icon(
-                            Icons.info_outline_rounded,
-                            size: 14,
-                            color: ColoresApp.textoSecundario,
+                      PopupMenuButton<String>(
+                        icon: const Icon(
+                          Icons.more_vert_rounded,
+                          size: 16,
+                          color: ColoresApp.textoSecundario,
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        tooltip: 'Opciones',
+                        color: ColoresApp.fondoTarjeta,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: const BorderSide(
+                            color: ColoresApp.bordeSutil,
+                            width: 1,
                           ),
                         ),
+                        onSelected: (opcion) async {
+                          if (opcion == 'reproducir') {
+                            alPresionar();
+                          } else if (opcion == 'favorito') {
+                            final nuevo =
+                                await ServicioPreferencias.alternarFavorito(
+                              video.ruta,
+                            );
+                            video.esFavorito = nuevo;
+                            alAlternarFavorito?.call();
+                            alActualizar?.call();
+                          } else if (opcion == 'marcar_visto') {
+                            final nuevo =
+                                await ServicioPreferencias.alternarCompletado(
+                              video.ruta,
+                              duracionTotalMs: video.duracionTotalMs,
+                            );
+                            video.estaCompletado = nuevo;
+                            video.posicionGuardadaMs = 0;
+                            alActualizar?.call();
+                            alReiniciarProgreso?.call();
+                          } else if (opcion == 'info') {
+                            if (context.mounted) {
+                              DialogoInformacionVideo.mostrar(context, video);
+                            }
+                          } else if (opcion == 'reiniciar') {
+                            await ServicioPreferencias.borrarProgresoVideo(
+                              video.ruta,
+                            );
+                            video.posicionGuardadaMs = 0;
+                            video.estaCompletado = false;
+                            alActualizar?.call();
+                            alReiniciarProgreso?.call();
+                          } else if (opcion == 'copiar_ruta') {
+                            Clipboard.setData(ClipboardData(text: video.ruta));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Ruta copiada al portapapeles'),
+                                duration: Duration(seconds: 1),
+                              ),
+                            );
+                          }
+                        },
+                        itemBuilder: (ctx) => [
+                          const PopupMenuItem(
+                            value: 'reproducir',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.play_arrow_rounded,
+                                  color: ColoresApp.acentoPrimario,
+                                  size: 18,
+                                ),
+                                SizedBox(width: 10),
+                                Text('Reproducir'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'favorito',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  video.esFavorito
+                                      ? Icons.star_rounded
+                                      : Icons.star_outline_rounded,
+                                  color: const Color(0xFFFFD700),
+                                  size: 18,
+                                ),
+                                SizedBox(width: 10),
+                                Text(
+                                  video.esFavorito
+                                      ? 'Quitar de Favoritos'
+                                      : 'Añadir a Favoritos',
+                                ),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'marcar_visto',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  estaCompletado
+                                      ? Icons.unpublished_outlined
+                                      : Icons.check_circle_outline_rounded,
+                                  color: ColoresApp.acentoVerde,
+                                  size: 18,
+                                ),
+                                SizedBox(width: 10),
+                                Text(
+                                  estaCompletado
+                                      ? 'Marcar como no visto'
+                                      : 'Marcar como visto',
+                                ),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'info',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.info_outline_rounded,
+                                  color: Colors.white70,
+                                  size: 18,
+                                ),
+                                SizedBox(width: 10),
+                                Text('Información del video'),
+                              ],
+                            ),
+                          ),
+                          if (tieneProgreso || estaCompletado)
+                            const PopupMenuItem(
+                              value: 'reiniciar',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.replay_rounded,
+                                    color: ColoresApp.acentoAmbar,
+                                    size: 18,
+                                  ),
+                                  SizedBox(width: 10),
+                                  Text('Reiniciar progreso'),
+                                ],
+                              ),
+                            ),
+                          const PopupMenuItem(
+                            value: 'copiar_ruta',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.copy_rounded,
+                                  color: ColoresApp.textoSecundario,
+                                  size: 18,
+                                ),
+                                SizedBox(width: 10),
+                                Text('Copiar ruta'),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),

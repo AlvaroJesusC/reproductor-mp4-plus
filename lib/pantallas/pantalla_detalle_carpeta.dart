@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../constantes/colores_app.dart';
 import '../modelos/modelo_carpeta_video.dart';
+import '../servicios/servicio_preferencias.dart';
 import '../widgets/tarjeta_video.dart';
 import 'pantalla_reproductor.dart';
 
@@ -57,12 +58,20 @@ class _PantallaDetalleCarpetaState extends State<PantallaDetalleCarpeta> {
                   listaReproduccion: videos,
                   indiceInicial: index,
                 );
-                if (mounted) setState(() {});
+                if (mounted) {
+                  await ServicioPreferencias.enriquecerVideosConProgreso(
+                    videos,
+                  );
+                  setState(() {});
+                }
               },
               alAlternarFavorito: () {
                 if (mounted) setState(() {});
               },
               alReiniciarProgreso: () {
+                if (mounted) setState(() {});
+              },
+              alActualizar: () {
                 if (mounted) setState(() {});
               },
             ),

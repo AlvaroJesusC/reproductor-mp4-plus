@@ -535,6 +535,12 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
                         widget.alActualizar();
                       }
                     },
+                    alActualizar: () {
+                      if (mounted) {
+                        setState(() {});
+                        widget.alActualizar();
+                      }
+                    },
                   ),
                 );
               },

@@ -162,11 +162,22 @@ class GestorPipGlobal {
   }
 
   /// Cierra el mini-reproductor, persiste la última posición vista y libera la memoria.
-  Future<void> cerrar() async {
-    if (videoActual != null && reproductor != null) {
+  Future<void> cerrar({bool guardarProgreso = true}) async {
+    if (videoActual != null && reproductor != null && guardarProgreso) {
       final posMs = reproductor!.state.position.inMilliseconds;
       final durMs = reproductor!.state.duration.inMilliseconds;
-      if (durMs > 0 && posMs > 0) {
+      final esCompletado = videoActual!.estaCompletado ||
+          reproductor!.state.completed ||
+          (durMs > 0 && (posMs >= durMs * 0.95 || durMs - posMs <= 4000));
+      if (esCompletado) {
+        unawaited(
+          ServicioPreferencias.marcarVideoCompletado(
+            videoActual!.ruta,
+            duracionTotalMs: durMs,
+            completado: true,
+          ),
+        );
+      } else if (durMs > 0 && posMs > 5000) {
         unawaited(
           ServicioPreferencias.guardarProgresoVideo(
             rutaVideo: videoActual!.ruta,
