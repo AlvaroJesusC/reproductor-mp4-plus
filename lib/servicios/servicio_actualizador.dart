@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:ota_update/ota_update.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../modelos/modelo_info_actualizacion.dart';
@@ -72,19 +73,57 @@ class ServicioActualizador {
       final notas = (data['body'] as String?)?.trim() ??
           'Corrección de errores y mejoras de rendimiento.';
 
+      // Obtener la arquitectura nativa del dispositivo (ej: 'arm64-v8a')
+      String? abiPreferida;
+      try {
+        abiPreferida = await OtaUpdate().getAbi();
+      } catch (_) {
+        abiPreferida = null;
+      }
+
       // Buscar el archivo APK en los assets del Release
       final assets = data['assets'] as List<dynamic>? ?? [];
       String? urlApk;
       String nombreArchivo = 'reproductor-mp4-plus.apk';
       int? tamanoBytes;
 
-      for (final asset in assets) {
-        final nombre = (asset['name'] as String? ?? '').toLowerCase();
-        if (nombre.endsWith('.apk')) {
-          urlApk = asset['browser_download_url'] as String?;
-          nombreArchivo = asset['name'] as String? ?? nombreArchivo;
-          tamanoBytes = asset['size'] as int?;
-          break;
+      // 1. Prioridad: Buscar coincidencia exacta con la arquitectura del dispositivo
+      if (abiPreferida != null && abiPreferida.isNotEmpty) {
+        final abiNormalizada = abiPreferida.toLowerCase();
+        for (final asset in assets) {
+          final nombre = (asset['name'] as String? ?? '').toLowerCase();
+          if (nombre.endsWith('.apk') && nombre.contains(abiNormalizada)) {
+            urlApk = asset['browser_download_url'] as String?;
+            nombreArchivo = asset['name'] as String? ?? nombreArchivo;
+            tamanoBytes = asset['size'] as int?;
+            break;
+          }
+        }
+      }
+
+      // 2. Si es dispositivo arm64-v8a y no hay APK arm64, fallback a armeabi-v7a
+      if (urlApk == null && abiPreferida?.toLowerCase() == 'arm64-v8a') {
+        for (final asset in assets) {
+          final nombre = (asset['name'] as String? ?? '').toLowerCase();
+          if (nombre.endsWith('.apk') && nombre.contains('armeabi-v7a')) {
+            urlApk = asset['browser_download_url'] as String?;
+            nombreArchivo = asset['name'] as String? ?? nombreArchivo;
+            tamanoBytes = asset['size'] as int?;
+            break;
+          }
+        }
+      }
+
+      // 3. Fallback general: tomar el primer APK que exista (ej: universal)
+      if (urlApk == null) {
+        for (final asset in assets) {
+          final nombre = (asset['name'] as String? ?? '').toLowerCase();
+          if (nombre.endsWith('.apk')) {
+            urlApk = asset['browser_download_url'] as String?;
+            nombreArchivo = asset['name'] as String? ?? nombreArchivo;
+            tamanoBytes = asset['size'] as int?;
+            break;
+          }
         }
       }
 
