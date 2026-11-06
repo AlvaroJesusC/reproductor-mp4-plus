@@ -62,7 +62,7 @@ class ModalPistasAudioSubtitulos extends StatelessWidget {
                   tabs: [
                     Tab(
                       icon: Icon(Icons.audiotrack_rounded, size: 20),
-                      text: 'Pistas de Audio',
+                      text: 'Pistas de Audios',
                     ),
                     Tab(
                       icon: Icon(Icons.subtitles_rounded, size: 20),
@@ -97,7 +97,7 @@ class ModalPistasAudioSubtitulos extends StatelessWidget {
                     if (alAbrirSincronizacion != null)
                       TextButton.icon(
                         icon: const Icon(Icons.sync_rounded, size: 18),
-                        label: const Text('Ajustar Delay'),
+                        label: const Text('Sincronizar Audio'),
                         style: TextButton.styleFrom(
                           foregroundColor: ColoresApp.acentoAmbar,
                         ),
