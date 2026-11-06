@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../constantes/colores_app.dart';
@@ -6,6 +7,8 @@ import '../modelos/modelo_video.dart';
 import '../servicios/servicio_almacenamiento_video.dart';
 import '../servicios/servicio_permisos.dart';
 import '../servicios/servicio_preferencias.dart';
+import '../servicios/servicio_actualizador.dart';
+import '../widgets/dialogo_actualizacion.dart';
 import '../modulos/pip/envoltorio_pip_scaffold.dart';
 import '../modulos/pip/gestor_pip_global.dart';
 import 'pantalla_reproductor.dart';
@@ -38,10 +41,22 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   // Control de doble toque para salir de la app
   DateTime? _ultimoToqueAtras;
 
+  // Timer para comprobar actualizaciones de forma desacoplada y segura
+  Timer? _timerActualizacion;
+
   @override
   void initState() {
     super.initState();
     _verificarPermisosYRecargar();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verificarActualizacionesSilencioso();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timerActualizacion?.cancel();
+    super.dispose();
   }
 
   Future<void> _verificarPermisosYRecargar() async {
@@ -213,6 +228,83 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
     SystemNavigator.pop();
   }
 
+  /// Comprobación silenciosa de actualizaciones al abrir la app.
+  void _verificarActualizacionesSilencioso() {
+    _timerActualizacion?.cancel();
+    _timerActualizacion = Timer(const Duration(seconds: 2), () async {
+      if (!mounted) return;
+      final info = await ServicioActualizador.verificarActualizacion();
+      if (info != null && info.hayNuevaVersion && mounted) {
+        await DialogoActualizacion.mostrar(context, info: info);
+      }
+    });
+  }
+
+  /// Comprobación manual forzada desde el menú de opciones.
+  Future<void> _buscarActualizacionesManual() async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            ),
+            SizedBox(width: 12),
+            Text('Buscando actualizaciones en GitHub...'),
+          ],
+        ),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: const BorderSide(color: ColoresApp.bordeSutil, width: 1),
+        ),
+        backgroundColor: ColoresApp.fondoTarjeta,
+      ),
+    );
+
+    final info = await ServicioActualizador.verificarActualizacion(forzar: true);
+    if (!mounted) return;
+
+    if (info != null && info.hayNuevaVersion) {
+      await DialogoActualizacion.mostrar(context, info: info);
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(
+                Icons.check_circle_outline_rounded,
+                color: ColoresApp.acentoVerde,
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  info == null
+                      ? 'No hay actualizaciones disponibles.'
+                      : 'Tienes la versión más reciente (v${info.versionActual}).',
+                ),
+              ),
+            ],
+          ),
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: const BorderSide(color: ColoresApp.bordeSutil, width: 1),
+          ),
+          backgroundColor: ColoresApp.fondoTarjeta,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_tienePermiso && !_estaCargando) {
@@ -356,12 +448,51 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
                   ),
                 ),
               )
-            else
+            else ...[
               IconButton(
                 icon: const Icon(Icons.refresh_rounded),
                 tooltip: 'Actualizar lista',
                 onPressed: () => _cargarVideos(forzarLimpiezaCache: true),
               ),
+              PopupMenuButton<String>(
+                icon: const Icon(
+                  Icons.more_vert_rounded,
+                  color: ColoresApp.textoSecundario,
+                ),
+                color: ColoresApp.fondoTarjeta,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: const BorderSide(color: ColoresApp.bordeSutil),
+                ),
+                onSelected: (valor) {
+                  if (valor == 'actualizar_app') {
+                    _buscarActualizacionesManual();
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'actualizar_app',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.system_update_rounded,
+                          color: ColoresApp.acentoPrimario,
+                          size: 20,
+                        ),
+                        SizedBox(width: 10),
+                        Text(
+                          'Buscar actualizaciones',
+                          style: TextStyle(
+                            color: ColoresApp.textoPrincipal,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
         body: _estaCargando
