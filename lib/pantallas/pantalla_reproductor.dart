@@ -183,6 +183,11 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   double _velocidadActual = 1.0;
   ModoRelacionAspecto _aspectoActual = ModoRelacionAspecto.ajustar;
 
+  // Velocidad rápida 2x temporal al mantener pulsado (estilo YouTube)
+  final ValueNotifier<bool> _velocidadRapida2xActiva = ValueNotifier<bool>(false);
+  final ValueNotifier<double> _velocidadRapidaDestino = ValueNotifier<double>(2.0);
+  double _velocidadPreviaAlMantener = 1.0;
+
   // Sincronización y retardo
   double _desfaseSubtitulosSegundos = 0.0;
   double _desfaseAudioSegundos = 0.0;
@@ -498,6 +503,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _suscripciones.add(
       _reproductor.stream.completed.listen((completado) async {
         if (!mounted || _estaSaliendo || !completado) return;
+        if (_velocidadRapida2xActiva.value) {
+          _alFinalizarPulsacionLarga();
+        }
         final durMs = _reproductor.state.duration.inMilliseconds;
         _videoActual.estaCompletado = true;
         _videoActual.posicionGuardadaMs = 0;
@@ -720,6 +728,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
+        _alFinalizarPulsacionLarga();
         _guardarProgresoInmediato();
         // Si no está en PiP, dar una ventana de gracia para permitir la transición a PiP del sistema.
         // Si tras la ventana de gracia sigue en segundo plano y NO está en PiP (ej: pantalla bloqueada),
@@ -1075,6 +1084,33 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     });
   }
 
+  /// Activa temporalmente la velocidad rápida 2x (o 3x si ya está en 2x) al mantener pulsado estilo YouTube.
+  void _alIniciarPulsacionLarga(LongPressStartDetails details) {
+    if (_pantallaBloqueada || !_estaInicializado || _estaSaliendo) return;
+    if (_reproductor.state.completed) return;
+    if (_nivelZoomNotifier.value > 1.05) return;
+    if (!_reproductor.state.playing) return;
+
+    _velocidadPreviaAlMantener = _velocidadActual;
+    final velocidadDestino = _velocidadActual < 2.0 ? 2.0 : 3.0;
+    _velocidadRapidaDestino.value = velocidadDestino;
+    _velocidadRapida2xActiva.value = true;
+
+    _reproductor.setRate(velocidadDestino);
+    HapticFeedback.mediumImpact();
+  }
+
+  /// Restaura la velocidad original al soltar la pulsación larga.
+  void _alFinalizarPulsacionLarga() {
+    if (!_velocidadRapida2xActiva.value) return;
+
+    _velocidadRapida2xActiva.value = false;
+    if (_estaInicializado && !_estaSaliendo) {
+      _reproductor.setRate(_velocidadPreviaAlMantener);
+    }
+    HapticFeedback.lightImpact();
+  }
+
   /// Cambia el modo de aspecto visual del video.
   void _cambiarAspecto(ModoRelacionAspecto nuevoAspecto) {
     _restablecerZoom(animado: false);
@@ -1103,6 +1139,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   /// Alterna el bloqueo de pantalla y ancla o libera la orientación.
   Future<void> _alternarBloqueo() async {
+    HapticFeedback.mediumImpact();
     _temporizadorOcultarControles?.cancel();
     _temporizadorOcultarOSD?.cancel();
     _temporizadorOcultarBotonDesbloqueo?.cancel();
@@ -1333,12 +1370,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     });
   }
 
-  /// Muestra el modal de sincronización fina de audio y subtítulos.
+  /// Muestra el modal de sincronización fina de audio y subtítulos con fondo translúcido sin tapar el video.
   void _mostrarModalSincronizacion() {
     if (!_estaInicializado || _estaSaliendo) return;
     showDialog(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.25),
+      barrierColor: Colors.transparent,
       builder: (_) => ModalSincronizacionPistas(
         desfaseSubtitulosSegundos: _desfaseSubtitulosSegundos,
         desfaseAudioSegundos: _desfaseAudioSegundos,
@@ -2090,6 +2127,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _offsetDeslizamientoMinimizar.dispose();
     _matrizTransformacionZoom.dispose();
     _nivelZoomNotifier.dispose();
+    _alFinalizarPulsacionLarga();
+    _velocidadRapida2xActiva.dispose();
+    _velocidadRapidaDestino.dispose();
     _estadoProgreso.dispose();
     _estadoReproduccion.dispose();
     _segundosRestantesAutoplayNotifier.dispose();
@@ -2242,6 +2282,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             onScaleUpdate: (details) =>
                 _alActualizarEscala(details, constraints),
             onScaleEnd: _alFinalizarEscala,
+            onLongPressStart: _alIniciarPulsacionLarga,
+            onLongPressEnd: (_) => _alFinalizarPulsacionLarga(),
+            onLongPressCancel: _alFinalizarPulsacionLarga,
             child: ValueListenableBuilder<double>(
               valueListenable: _offsetDeslizamientoMinimizar,
               builder: (context, offsetY, child) {
@@ -2335,21 +2378,24 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
                 // 3. Controles cinemáticos con desvanecimiento fluido (Curves.easeInOut)
                 RepaintBoundary(
-                  child: AnimatedOpacity(
-                    opacity:
-                        (_mostrarControles &&
-                            !_pantallaBloqueada &&
-                            _estaInicializado)
-                        ? 1.0
-                        : 0.0,
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeInOut,
-                    child: IgnorePointer(
-                      ignoring:
-                          !_mostrarControles ||
-                          _pantallaBloqueada ||
-                          !_estaInicializado,
-                      child: ControlesReproductor(
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: _velocidadRapida2xActiva,
+                    builder: (context, velocidad2x, child) {
+                      final visible = _mostrarControles &&
+                          !_pantallaBloqueada &&
+                          !velocidad2x &&
+                          _estaInicializado;
+                      return AnimatedOpacity(
+                        opacity: visible ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeInOut,
+                        child: IgnorePointer(
+                          ignoring: !visible,
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: ControlesReproductor(
                         tituloVideo: _videoActual.nombreSinExtension,
                         estadoProgreso: _estadoProgreso,
                         estadoReproduccion: _estadoReproduccion,
@@ -2431,6 +2477,11 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                       ),
                     ),
                   ),
+
+                // 4. Pastilla flotante de velocidad 2x rápida estilo YouTube (aislada con ValueListenableBuilder)
+                PastillaVelocidad2x(
+                  velocidad2xNotifier: _velocidadRapida2xActiva,
+                  velocidadDestinoNotifier: _velocidadRapidaDestino,
                 ),
 
                 // 4. Botón de desbloqueo flotante (cuando SÍ está bloqueado)
@@ -2468,12 +2519,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   );
   }
 
-  /// Botón de desbloqueo que se oculta o muestra al tocar en cualquier parte de la pantalla.
+  /// Botón de desbloqueo ergonómico en la zona inferior izquierda (alineado con la posición del candado).
   Widget _construirBotonDesbloqueoFlotante() {
     final insets = MediaQuery.paddingOf(context);
     return Positioned(
-      top: 16 + insets.top,
-      left: 16 + insets.left,
+      bottom: 18 + insets.bottom,
+      left: 18 + insets.left,
       child: AnimatedOpacity(
         opacity: _mostrarBotonDesbloqueo ? 1.0 : 0.0,
         duration: const Duration(milliseconds: 200),
@@ -2578,5 +2629,94 @@ class _LienzoVideo extends StatelessWidget {
     }
 
     return Video(controller: controlador, fit: fit, controls: NoVideoControls);
+  }
+}
+
+/// Pastilla flotante OSD para velocidad rápida 2x temporal (al mantener pulsado estilo YouTube).
+/// Aislada en su propio RepaintBoundary y ValueListenableBuilder para evitar reconstrucciones.
+class PastillaVelocidad2x extends StatelessWidget {
+  final ValueNotifier<bool> velocidad2xNotifier;
+  final ValueNotifier<double> velocidadDestinoNotifier;
+
+  const PastillaVelocidad2x({
+    super.key,
+    required this.velocidad2xNotifier,
+    required this.velocidadDestinoNotifier,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final insets = MediaQuery.paddingOf(context);
+
+    return Positioned(
+      top: 24 + insets.top,
+      left: 0,
+      right: 0,
+      child: RepaintBoundary(
+        child: Center(
+          child: ValueListenableBuilder<bool>(
+            valueListenable: velocidad2xNotifier,
+            builder: (context, activa, _) {
+              return AnimatedOpacity(
+                opacity: activa ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 150),
+                curve: Curves.easeInOut,
+                child: IgnorePointer(
+                  ignoring: !activa,
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: velocidadDestinoNotifier,
+                    builder: (context, velocidad, _) {
+                      final etiqueta =
+                          '${velocidad.toStringAsFixed(velocidad % 1 == 0 ? 0 : 1)}x';
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.75),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: ColoresApp.acentoPrimario.withValues(alpha: 0.70),
+                            width: 1.2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              blurRadius: 10,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              etiqueta,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.4,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            const Icon(
+                              Icons.fast_forward_rounded,
+                              color: ColoresApp.acentoPrimario,
+                              size: 16,
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
   }
 }

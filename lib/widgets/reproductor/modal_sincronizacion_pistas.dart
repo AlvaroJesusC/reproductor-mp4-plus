@@ -79,18 +79,18 @@ class _ModalSincronizacionPistasState extends State<ModalSincronizacionPistas> {
           width: 380,
           constraints: const BoxConstraints(maxWidth: 400),
           decoration: BoxDecoration(
-            color: ColoresApp.fondoOSD.withValues(alpha: 0.94),
+            // Fondo translúcido (40% de opacidad) que permite ver el video y los subtítulos por debajo
+            color: ColoresApp.fondoModalTranslucido,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: Colors.white.withValues(alpha: 0.14),
+              color: Colors.white.withValues(alpha: 0.16),
               width: 1.0,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.55),
-                blurRadius: 20,
-                spreadRadius: 2,
-                offset: const Offset(0, 6),
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
