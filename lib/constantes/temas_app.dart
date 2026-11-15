@@ -96,6 +96,18 @@ class TemasApp {
           fontWeight: FontWeight.bold,
         ),
       ),
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: ColoresApp.fondoTarjeta,
+        contentTextStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+        ),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: const BorderSide(color: ColoresApp.bordeSutil, width: 1),
+        ),
+      ),
     );
   }
 }

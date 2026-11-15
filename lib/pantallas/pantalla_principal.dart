@@ -209,7 +209,10 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
             children: [
               Icon(Icons.info_outline_rounded, color: Colors.white, size: 18),
               SizedBox(width: 8),
-              Text('Presiona atrás nuevamente para salir'),
+              Text(
+                'Presiona atrás nuevamente para salir',
+                style: TextStyle(color: Colors.white, fontSize: 14),
+              ),
             ],
           ),
           duration: const Duration(seconds: 2),
@@ -255,7 +258,13 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
               ),
             ),
             SizedBox(width: 12),
-            Text('Buscando actualizaciones en GitHub...'),
+            Text(
+              'Buscando actualizaciones en GitHub...',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+              ),
+            ),
           ],
         ),
         duration: const Duration(seconds: 2),
@@ -289,6 +298,10 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
                   info == null
                       ? 'No hay actualizaciones disponibles.'
                       : 'Tienes la versión más reciente (v${info.versionActual}).',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                  ),
                 ),
               ),
             ],
