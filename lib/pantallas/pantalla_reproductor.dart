@@ -27,6 +27,7 @@ import '../widgets/reproductor/modal_velocidad.dart';
 import '../modulos/pip/gestor_pip_global.dart';
 import '../modulos/pip/servicio_pip_nativo.dart';
 import '../widgets/reproductor/overlay_reproduccion_automatica.dart';
+import '../widgets/reproductor/vista_previa_scrubber.dart';
 
 /// Pantalla del reproductor de video con soporte universal y transición suave sin distorsión al salir.
 class PantallaReproductor extends StatefulWidget {
@@ -144,6 +145,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   /// Control reactivo de la opacidad del filtro de atenuación nocturna (sub-cero).
   final ValueNotifier<double> _opacidadFiltroNoche = ValueNotifier(0.0);
+
+  /// Controlador modular para vista previa en tiempo real al arrastrar el scrubber.
+  final ControladorVistaPreviaScrubber _controladorVistaPrevia =
+      ControladorVistaPreviaScrubber();
 
   /// Desplazamiento cinemático vertical para minimizar al mini-reproductor estilo YouTube
   final ValueNotifier<double> _offsetDeslizamientoMinimizar = ValueNotifier(0.0);
@@ -352,6 +357,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             _estaInicializado = true;
           });
         }
+        _controladorVistaPrevia.prepararParaVideo(
+          _videoActual.ruta,
+          duracionInicialMs: _videoActual.duracionTotalMs,
+        );
         _reiniciarTemporizadorOcultarControles();
         return;
       }
@@ -552,6 +561,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         if (mounted && dur > Duration.zero && !_estaSaliendo) {
           _videoActual.duracionTotalMs = dur.inMilliseconds;
           _actualizarProgreso(duracionMs: dur.inMilliseconds);
+          _controladorVistaPrevia.actualizarDuracion(dur.inMilliseconds);
         }
       }),
     );
@@ -656,6 +666,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       setState(() {
         _estaInicializado = true;
       });
+      _controladorVistaPrevia.prepararParaVideo(
+        _videoActual.ruta,
+        duracionInicialMs: _videoActual.duracionTotalMs,
+      );
 
       if (objetivoReanudacionMs > 0) {
         unawaited(_verificarReanudacion(objetivoReanudacionMs));
@@ -797,6 +811,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     if (_estaSaliendo) return;
     _estaSaliendo = true;
     _cancelarCuentaRegresivaAutoplay();
+    _controladorVistaPrevia.liberarRecursos();
 
     // Cerrar sesión en PiP si el usuario cerró el reproductor completamente (sin sobreescribir progreso)
     unawaited(GestorPipGlobal.instancia.cerrar(guardarProgreso: false));
@@ -835,6 +850,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
     _estaSaliendo = true;
     _cancelarCuentaRegresivaAutoplay();
+    _controladorVistaPrevia.liberarRecursos();
     PantallaReproductor.ultimoGuardadoFuture = _guardarProgresoInmediato();
 
     try {
@@ -947,24 +963,32 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     if (!_estaInicializado || _estaSaliendo) return;
     _arrastrandoScrubber = true;
     _temporizadorOcultarControles?.cancel();
+    final duracionMs = _reproductor.state.duration.inMilliseconds;
+    _controladorVistaPrevia.alIniciarArrastre(ratio, duracionMs);
   }
 
-  /// Cambia la posición mediante la barra de deslizamiento con Fast-Seeking por Keyframes.
+  /// Actualiza la burbuja de vista previa en tiempo real sin interrumpir el video principal.
   void _cambiarProgreso(double ratio) {
     if (!_estaInicializado || _estaSaliendo) return;
     _arrastrandoScrubber = true;
     final duracionMs = _reproductor.state.duration.inMilliseconds;
-    final objetivoMs = (ratio * duracionMs).round();
+    final ratioEfectivo = _controladorVistaPrevia.alCambiarProgreso(
+      ratio,
+      duracionMs,
+    );
+    final objetivoMs = (ratioEfectivo * duracionMs).round();
     _posicionSeekArrastreMs = objetivoMs;
     _actualizarProgreso(posicionMs: objetivoMs);
-    _ejecutarFastSeek(Duration(milliseconds: objetivoMs));
   }
 
   Future<void> _finalizarCambioProgreso(double ratio) async {
     if (!_estaInicializado || _estaSaliendo) return;
     _arrastrandoScrubber = false;
     final duracionMs = _reproductor.state.duration.inMilliseconds;
-    final objetivoMs = (ratio * duracionMs).round();
+    final objetivoMs = _controladorVistaPrevia.alFinalizarArrastre(
+      ratioFallback: ratio,
+      duracionMs: duracionMs,
+    );
     await _reproductor.seek(Duration(milliseconds: objetivoMs));
     _reiniciarTemporizadorOcultarControles();
   }
@@ -2135,6 +2159,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _segundosRestantesAutoplayNotifier.dispose();
     _versionOSD.dispose();
     _opacidadFiltroNoche.dispose();
+    _controladorVistaPrevia.dispose();
 
     try {
       ScreenBrightness.instance.resetApplicationScreenBrightness();
@@ -2399,6 +2424,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                         tituloVideo: _videoActual.nombreSinExtension,
                         estadoProgreso: _estadoProgreso,
                         estadoReproduccion: _estadoReproduccion,
+                        controladorVistaPrevia: _controladorVistaPrevia,
                         pantallaBloqueada: _pantallaBloqueada,
                         velocidadActual: _velocidadActual,
                         aspectoActual: _aspectoActual,

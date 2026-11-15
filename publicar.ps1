@@ -31,7 +31,11 @@ Write-Host "Guardando cambios en Git..." -ForegroundColor Cyan
 git add .
 
 # 3. Crear commit
-git commit -m "chore(release): version $tag - $Notas"
+$mensajeCommit = Read-Host "Nombre del commit (Enter para usar 'chore(release): version $tag - $Notas')"
+if ([string]::IsNullOrWhiteSpace($mensajeCommit)) {
+    $mensajeCommit = "chore(release): version $tag - $Notas"
+}
+git commit -m "$mensajeCommit"
 Write-Host "[OK] Commit creado exitosamente" -ForegroundColor Green
 
 # 4. Crear etiqueta de release

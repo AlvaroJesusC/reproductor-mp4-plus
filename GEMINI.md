@@ -11,3 +11,4 @@ Siempre que el usuario pida crear, optimizar o modificar código:
 4. **Optimización y Rendimiento de Video (60/120/144 FPS):** Aplica rigurosamente `.agent/skills/flutter-performance/SKILL.md`.
 5. **Mejora de UI y Layout Adaptativo:** Aplica `.agent/skills/adaptive-layout/SKILL.md`, `.agent/skills/widget-composition/SKILL.md`, `.agent/skills/custom-canvas-and-gestures/SKILL.md` y `.agent/skills/motion-and-haptics/SKILL.md`.
 6. **Código Limpio y Moderno:** Aplica `.agent/skills/dart3-idioms-and-coding-standards/SKILL.md` y `.agent/skills/async-safety/SKILL.md`.
+7. **Auto-Actualizaciones In-App y CI/CD:** Aplica `.agent/skills/github-in-app-updater/SKILL.md`.

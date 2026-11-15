@@ -23,6 +23,7 @@
 | **Estados de Buffering, Carga, Error y Playlists Vacías** | `ui-states-and-feedback` |
 | **Sintaxis Moderna Dart 3 sin Código Redundante** | `dart3-idioms-and-coding-standards` |
 | **Seguridad Asíncrona (Dispose de controladores, mounted checks)** | `async-safety` |
+| **Auto-Actualizaciones In-App y CI/CD con GitHub Releases** | `github-in-app-updater` |
 | **Arquitectura Limpia y Modular** | `flutter-architecture`, `project-structure-and-packages` |
 
 ---

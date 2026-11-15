@@ -3,12 +3,14 @@ import '../../constantes/colores_app.dart';
 import '../../modelos/modelo_opciones_reproduccion.dart';
 import '../../modelos/modelo_video.dart';
 import 'panel_lateral_opciones.dart';
+import 'vista_previa_scrubber.dart';
 
 /// Controles cinemáticos, minimalistas y completos con diseño OLED y micro-aislamiento reactivo.
 class ControlesReproductor extends StatelessWidget {
   final String tituloVideo;
   final ValueNotifier<EstadoProgresoReproductor> estadoProgreso;
   final ValueNotifier<EstadoReproduccionVideo> estadoReproduccion;
+  final ControladorVistaPreviaScrubber? controladorVistaPrevia;
   final bool pantallaBloqueada;
   final double velocidadActual;
   final ModoRelacionAspecto aspectoActual;
@@ -54,6 +56,7 @@ class ControlesReproductor extends StatelessWidget {
     required this.tituloVideo,
     required this.estadoProgreso,
     required this.estadoReproduccion,
+    this.controladorVistaPrevia,
     required this.pantallaBloqueada,
     required this.velocidadActual,
     required this.aspectoActual,
@@ -327,6 +330,8 @@ class ControlesReproductor extends StatelessWidget {
           // FILA 1: TIEMPOS Y BARRA DE PROGRESO (Aislado reactivamente)
           _BarraProgresoAislada(
             estadoProgreso: estadoProgreso,
+            controladorVistaPrevia: controladorVistaPrevia,
+            esHorizontal: esPantallaCompletaHorizontal,
             alIniciarCambioProgreso: alIniciarCambioProgreso,
             alCambiarProgreso: alCambiarProgreso,
             alFinalizarCambioProgreso: alFinalizarCambioProgreso,
@@ -464,12 +469,16 @@ class ControlesReproductor extends StatelessWidget {
 /// redibuja únicamente este componente, dejando estáticos todos los botones y degradados.
 class _BarraProgresoAislada extends StatelessWidget {
   final ValueNotifier<EstadoProgresoReproductor> estadoProgreso;
+  final ControladorVistaPreviaScrubber? controladorVistaPrevia;
+  final bool esHorizontal;
   final ValueChanged<double>? alIniciarCambioProgreso;
   final ValueChanged<double> alCambiarProgreso;
   final ValueChanged<double> alFinalizarCambioProgreso;
 
   const _BarraProgresoAislada({
     required this.estadoProgreso,
+    this.controladorVistaPrevia,
+    this.esHorizontal = false,
     this.alIniciarCambioProgreso,
     required this.alCambiarProgreso,
     required this.alFinalizarCambioProgreso,
@@ -508,51 +517,82 @@ class _BarraProgresoAislada extends StatelessWidget {
               ),
               const SizedBox(width: 8),
 
-              // Barra de progreso (Slider) con indicador de buffer
+              // Barra de progreso (Slider) con indicador de buffer y vista previa flotante
               Expanded(
-                child: Stack(
-                  alignment: Alignment.centerLeft,
-                  children: [
-                    // El Slider reserva el radio del thumb en ambos extremos.
-                    // Aplicar el mismo margen evita que la pista gris sobresalga.
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6.5),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(2),
-                        child: LinearProgressIndicator(
-                          value: ratioBuffer,
-                          backgroundColor: Colors.white.withValues(alpha: 0.2),
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white.withValues(alpha: 0.4),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      alignment: Alignment.centerLeft,
+                      children: [
+                        // El Slider reserva el radio del thumb en ambos extremos.
+                        // Aplicar el mismo margen evita que la pista gris sobresalga.
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6.5),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(2),
+                            child: LinearProgressIndicator(
+                              value: ratioBuffer,
+                              backgroundColor: Colors.white.withValues(
+                                alpha: 0.2,
+                              ),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white.withValues(alpha: 0.4),
+                              ),
+                              minHeight: 3,
+                            ),
                           ),
-                          minHeight: 3,
                         ),
-                      ),
-                    ),
-                    SliderTheme(
-                      data: const SliderThemeData(
-                        trackHeight: 3,
-                        activeTrackColor: Color(0xFFFF5722), // Naranja vibrante
-                        inactiveTrackColor: Colors.transparent,
-                        thumbColor: Color(0xFFFF5722),
-                        thumbShape: RoundSliderThumbShape(
-                          enabledThumbRadius: 6.5,
+                        Listener(
+                          behavior: HitTestBehavior.translucent,
+                          onPointerDown: (evento) {
+                            controladorVistaPrevia?.registrarInicioPunteroY(
+                              evento.position.dy,
+                            );
+                          },
+                          onPointerMove: (evento) {
+                            controladorVistaPrevia?.alMoverPuntero(
+                              evento.position.dy,
+                            );
+                          },
+                          onPointerCancel: (_) {
+                            controladorVistaPrevia?.cancelarArrastreSiActivo();
+                          },
+                          child: SliderTheme(
+                            data: const SliderThemeData(
+                              trackHeight: 3,
+                              activeTrackColor: Color(
+                                0xFFFF5722,
+                              ), // Naranja vibrante
+                              inactiveTrackColor: Colors.transparent,
+                              thumbColor: Color(0xFFFF5722),
+                              thumbShape: RoundSliderThumbShape(
+                                enabledThumbRadius: 6.5,
+                              ),
+                              overlayColor: Color(0x33FF5722),
+                              overlayShape: RoundSliderOverlayShape(
+                                overlayRadius: 14,
+                              ),
+                            ),
+                            child: Slider(
+                              value: valorProgreso,
+                              min: 0.0,
+                              max: 1.0,
+                              onChangeStart: alIniciarCambioProgreso,
+                              onChanged: alCambiarProgreso,
+                              onChangeEnd: alFinalizarCambioProgreso,
+                            ),
+                          ),
                         ),
-                        overlayColor: Color(0x33FF5722),
-                        overlayShape: RoundSliderOverlayShape(
-                          overlayRadius: 14,
-                        ),
-                      ),
-                      child: Slider(
-                        value: valorProgreso,
-                        min: 0.0,
-                        max: 1.0,
-                        onChangeStart: alIniciarCambioProgreso,
-                        onChanged: alCambiarProgreso,
-                        onChangeEnd: alFinalizarCambioProgreso,
-                      ),
-                    ),
-                  ],
+                        if (controladorVistaPrevia != null)
+                          BurbujaVistaPreviaScrubber(
+                            controlador: controladorVistaPrevia!,
+                            anchoPista: constraints.maxWidth,
+                            esHorizontal: esHorizontal,
+                          ),
+                      ],
+                    );
+                  },
                 ),
               ),
               const SizedBox(width: 8),
