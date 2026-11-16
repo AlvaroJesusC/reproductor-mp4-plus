@@ -76,8 +76,72 @@ class PestanaRecientes extends StatelessWidget {
       physics: const BouncingScrollPhysics(
         parent: AlwaysScrollableScrollPhysics(),
       ),
-      padding: const EdgeInsets.only(top: 12, bottom: 80),
+      padding: const EdgeInsets.only(top: 10, bottom: 84),
       children: [
+        // Encabezado de sección principal
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
+          child: Row(
+            children: [
+              Container(
+                width: 4,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: ColoresApp.acentoPrimario,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'Seguir viendo',
+                style: TextStyle(
+                  color: ColoresApp.textoPrincipal,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.2,
+                ),
+              ),
+              const Spacer(),
+              if (videoHero.carpetaContenedora.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: ColoresApp.fondoTarjeta,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: ColoresApp.bordeSutil, width: 1),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.folder_outlined,
+                        color: ColoresApp.textoSecundario,
+                        size: 12,
+                      ),
+                      const SizedBox(width: 4),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 150),
+                        child: Text(
+                          videoHero.carpetaContenedora,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: ColoresApp.textoSecundario,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+
         // 1. HERO SHOWCASE CINEMÁTICO DEL ÚLTIMO VIDEO
         RepaintBoundary(
           child: Padding(
@@ -88,14 +152,14 @@ class PestanaRecientes extends StatelessWidget {
 
         // 2. LISTA DE OTROS VIDEOS EN PROGRESO (SI EXISTEN)
         if (otrosVideos.isNotEmpty) ...[
-          const SizedBox(height: 20),
+          const SizedBox(height: 22),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text(
-                  'Otros en progreso',
+                  'También en progreso',
                   style: TextStyle(
                     color: ColoresApp.textoPrincipal,
                     fontSize: 14.5,
@@ -103,12 +167,23 @@ class PestanaRecientes extends StatelessWidget {
                     letterSpacing: 0.2,
                   ),
                 ),
-                Text(
-                  '${otrosVideos.length}',
-                  style: const TextStyle(
-                    color: ColoresApp.textoSecundario,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: ColoresApp.fondoTarjeta,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: ColoresApp.bordeSutil, width: 1),
+                  ),
+                  child: Text(
+                    '${otrosVideos.length}',
+                    style: const TextStyle(
+                      color: ColoresApp.textoSecundario,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -143,9 +218,10 @@ class PestanaRecientes extends StatelessWidget {
     );
   }
 
-  /// Construye la tarjeta Hero destacada 16:9 con gradiente, botón de continuar y metadatos.
+  /// Construye la tarjeta Hero destacada 16:9 con miniatura HD nítida, gradiente cinemático y barra carmesí.
   Widget _construirHeroCard(BuildContext context, ModeloVideo video) {
     final porcentaje = video.porcentajeVisto;
+    final porcentajeEntero = (porcentaje * 100).round().clamp(1, 99);
     final restanteMs = video.duracionTotalMs - video.posicionGuardadaMs;
     final minutosRestantes = restanteMs > 0 ? (restanteMs / 60000).ceil() : 0;
 
@@ -153,78 +229,114 @@ class PestanaRecientes extends StatelessWidget {
       aspectRatio: 16 / 9,
       child: Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: ColoresApp.bordeSutil, width: 1),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.14),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.45),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
         ),
         clipBehavior: Clip.antiAlias,
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Fondo con miniatura recortada (cache acotado a 640x360 para 60/120 FPS)
+            // Fondo con miniatura HD nítida (640p preservando relación de aspecto real)
             _construirFondoHero(video),
 
-            // Gradiente oscuro cinemático para garantizar contraste
+            // Gradiente cinemático calibrado: deja limpio y nítido el 65% superior de la imagen
+            // y oscurece suavemente la base para máxima legibilidad del texto.
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withValues(alpha: 0.2),
-                    Colors.black.withValues(alpha: 0.45),
-                    ColoresApp.fondoPrincipal.withValues(alpha: 0.95),
+                    Colors.black.withValues(alpha: 0.15),
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.55),
+                    ColoresApp.fondoPrincipal.withValues(alpha: 0.96),
                   ],
-                  stops: const [0.0, 0.5, 1.0],
+                  stops: const [0.0, 0.42, 0.72, 1.0],
                 ),
               ),
             ),
 
-            // Botón central translúcido para continuar
-            Center(
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(32),
-                  onTap: () async {
-                    await PantallaReproductor.abrir(
-                      context,
-                      video,
-                      listaReproduccion: videosRecientes,
-                      indiceInicial: 0,
-                    );
-                    alActualizar();
-                  },
-                  child: Container(
-                    width: 54,
-                    height: 54,
-                    decoration: BoxDecoration(
-                      color: ColoresApp.acentoPrimario.withValues(alpha: 0.9),
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: ColoresApp.acentoPrimario.withValues(
-                            alpha: 0.35,
-                          ),
-                          blurRadius: 16,
-                          spreadRadius: 2,
-                        ),
-                      ],
+            // Pastilla superior derecha con marca de tiempo exacta
+            if (video.duracionTotalMs > 0)
+              Positioned(
+                top: 10,
+                right: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xBF0A0D14),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.14),
+                      width: 0.8,
                     ),
-                    child: const Icon(
-                      Icons.play_arrow_rounded,
+                  ),
+                  child: Text(
+                    '${video.tiempoGuardadoLegible} / ${video.duracionTotalLegible}',
+                    style: const TextStyle(
                       color: Colors.white,
-                      size: 34,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: [FontFeature.tabularFigures()],
                     ),
                   ),
                 ),
               ),
+
+            // Botón central refinado con anillo sutil y gradiente carmesí
+            Center(
+              child: Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      ColoresApp.acentoPrimario,
+                      Color(0xFFD91642),
+                    ],
+                  ),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.35),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: ColoresApp.acentoPrimario.withValues(alpha: 0.40),
+                      blurRadius: 18,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 34,
+                ),
+              ),
             ),
 
-            // Información inferior: Título, progreso y tiempo restante
+            // Información inferior: Insignia, tiempo restante, porcentaje y título limpio
             Positioned(
               left: 14,
               right: 14,
-              bottom: 12,
+              bottom: 13,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -233,17 +345,17 @@ class PestanaRecientes extends StatelessWidget {
                     children: [
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
+                          horizontal: 7,
+                          vertical: 2.5,
                         ),
                         decoration: BoxDecoration(
                           color: ColoresApp.acentoPrimario.withValues(
-                            alpha: 0.2,
+                            alpha: 0.24,
                           ),
-                          borderRadius: BorderRadius.circular(4),
+                          borderRadius: BorderRadius.circular(5),
                           border: Border.all(
                             color: ColoresApp.acentoPrimario.withValues(
-                              alpha: 0.5,
+                              alpha: 0.65,
                             ),
                             width: 0.8,
                           ),
@@ -252,18 +364,18 @@ class PestanaRecientes extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              Icons.history_rounded,
+                              Icons.play_circle_fill_rounded,
                               color: ColoresApp.acentoPrimario,
                               size: 11,
                             ),
-                            SizedBox(width: 3),
+                            SizedBox(width: 4),
                             Text(
                               'CONTINUAR',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 9.5,
                                 fontWeight: FontWeight.bold,
-                                letterSpacing: 0.5,
+                                letterSpacing: 0.6,
                               ),
                             ),
                           ],
@@ -276,20 +388,30 @@ class PestanaRecientes extends StatelessWidget {
                             : '${video.tiempoGuardadoLegible} / ${video.duracionTotalLegible}',
                         style: const TextStyle(
                           color: ColoresApp.acentoAmbar,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '$porcentajeEntero%',
+                        style: const TextStyle(
+                          color: ColoresApp.textoSecundario,
                           fontSize: 11.5,
                           fontWeight: FontWeight.w600,
+                          fontFeatures: [FontFeature.tabularFigures()],
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 5),
                   Text(
-                    video.nombre,
+                    video.nombreSinExtension,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 15,
+                      fontSize: 15.5,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.1,
                     ),
@@ -298,22 +420,35 @@ class PestanaRecientes extends StatelessWidget {
               ),
             ),
 
-            // Barra de progreso delgada incrustada en el borde inferior
+            // Barra de línea de tiempo cinemática con gradiente carmesí-rosa (reemplaza el naranja)
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
-              child: LinearProgressIndicator(
-                value: porcentaje,
-                backgroundColor: Colors.white12,
-                valueColor: const AlwaysStoppedAnimation<Color>(
-                  ColoresApp.acentoAmbar,
+              height: 4,
+              child: ColoredBox(
+                color: Colors.white.withValues(alpha: 0.14),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: porcentaje.clamp(0.0, 1.0),
+                    heightFactor: 1.0,
+                    child: const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            ColoresApp.acentoPrimario,
+                            ColoresApp.acentoSecundario,
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-                minHeight: 3,
               ),
             ),
 
-            // Todo el Hero es clickeable
+            // Todo el Hero es clickeable con efecto ripple sutil
             Positioned.fill(
               child: Material(
                 color: Colors.transparent,
@@ -343,8 +478,7 @@ class PestanaRecientes extends StatelessWidget {
         File(enMemoria),
         fit: BoxFit.cover,
         cacheWidth: 640,
-        cacheHeight: 360,
-        filterQuality: FilterQuality.low,
+        filterQuality: FilterQuality.medium,
         errorBuilder: (context, error, stackTrace) => _fallbackHero(),
       );
     }
@@ -360,8 +494,7 @@ class PestanaRecientes extends StatelessWidget {
           File(rutaMiniatura),
           fit: BoxFit.cover,
           cacheWidth: 640,
-          cacheHeight: 360,
-          filterQuality: FilterQuality.low,
+          filterQuality: FilterQuality.medium,
           errorBuilder: (context, error, stackTrace) => _fallbackHero(),
         );
       },

@@ -40,15 +40,15 @@ class TarjetaVideo extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Miniatura 16:9 panorámica (104 x 58.5 px) con pastilla de duración y barra incrustada
+            // Miniatura 16:9 panorámica (112 x 63 px) con pastilla de duración y barra incrustada
             SizedBox(
-              width: 104,
-              height: 58.5,
+              width: 112,
+              height: 63,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(9),
                     child: Container(
                       color: ColoresApp.fondoTarjeta,
                       child: _construirImagenMiniatura(
@@ -62,7 +62,7 @@ class TarjetaVideo extends StatelessWidget {
                   Positioned.fill(
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(9),
                         border: Border.all(
                           color: estaCompletado
                               ? ColoresApp.acentoVerde.withValues(alpha: 0.5)
@@ -125,12 +125,12 @@ class TarjetaVideo extends StatelessWidget {
                       right: 4,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
+                          horizontal: 4.5,
                           vertical: 1.5,
                         ),
                         decoration: BoxDecoration(
                           color: ColoresApp.fondoPastillaTiempo,
-                          borderRadius: BorderRadius.circular(3),
+                          borderRadius: BorderRadius.circular(3.5),
                         ),
                         child: Text(
                           video.duracionTotalLegible,
@@ -139,12 +139,13 @@ class TarjetaVideo extends StatelessWidget {
                             fontSize: 10,
                             fontWeight: FontWeight.w600,
                             letterSpacing: 0.1,
+                            fontFeatures: [FontFeature.tabularFigures()],
                           ),
                         ),
                       ),
                     ),
 
-                  // Barra delgada de progreso (2 px) incrustada en la base de la miniatura
+                  // Barra delgada de progreso (2.5 px) incrustada en la base de la miniatura
                   if (tieneProgreso && !estaCompletado)
                     Positioned(
                       left: 0,
@@ -152,13 +153,13 @@ class TarjetaVideo extends StatelessWidget {
                       bottom: 0,
                       child: ClipRRect(
                         borderRadius: const BorderRadius.vertical(
-                          bottom: Radius.circular(8),
+                          bottom: Radius.circular(9),
                         ),
                         child: LinearProgressIndicator(
                           value: porcentaje,
                           backgroundColor: Colors.black54,
                           valueColor: const AlwaysStoppedAnimation<Color>(
-                            ColoresApp.acentoAmbar,
+                            ColoresApp.barraProgreso,
                           ),
                           minHeight: 2.5,
                         ),
@@ -176,7 +177,7 @@ class TarjetaVideo extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    video.nombre,
+                    video.nombreSinExtension,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -212,7 +213,7 @@ class TarjetaVideo extends StatelessWidget {
                     Row(
                       children: [
                         const Icon(
-                          Icons.timelapse_rounded,
+                          Icons.play_circle_outline_rounded,
                           color: ColoresApp.acentoAmbar,
                           size: 13,
                         ),
@@ -222,7 +223,8 @@ class TarjetaVideo extends StatelessWidget {
                           style: const TextStyle(
                             color: ColoresApp.acentoAmbar,
                             fontSize: 11.5,
-                            fontWeight: FontWeight.w500,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: [FontFeature.tabularFigures()],
                           ),
                         ),
                       ],
@@ -405,9 +407,8 @@ class TarjetaVideo extends StatelessWidget {
       return Image.file(
         File(enMemoria),
         fit: BoxFit.cover,
-        cacheWidth: 260,
-        cacheHeight: 146,
-        filterQuality: FilterQuality.low,
+        cacheWidth: 320,
+        filterQuality: FilterQuality.medium,
         errorBuilder: (context, error, stackTrace) =>
             _iconoVideo(tieneProgreso, estaCompletado),
       );
@@ -423,9 +424,8 @@ class TarjetaVideo extends StatelessWidget {
         return Image.file(
           File(rutaMiniatura),
           fit: BoxFit.cover,
-          cacheWidth: 260,
-          cacheHeight: 146,
-          filterQuality: FilterQuality.low,
+          cacheWidth: 320,
+          filterQuality: FilterQuality.medium,
           errorBuilder: (context, error, stackTrace) =>
               _iconoVideo(tieneProgreso, estaCompletado),
         );
@@ -582,7 +582,7 @@ class TarjetaVideoCuadricula extends StatelessWidget {
                         value: porcentaje,
                         backgroundColor: Colors.black54,
                         valueColor: const AlwaysStoppedAnimation<Color>(
-                          ColoresApp.acentoAmbar,
+                          ColoresApp.barraProgreso,
                         ),
                         minHeight: 2.5,
                       ),
@@ -598,7 +598,7 @@ class TarjetaVideoCuadricula extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    video.nombre,
+                    video.nombreSinExtension,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -807,9 +807,8 @@ class TarjetaVideoCuadricula extends StatelessWidget {
       return Image.file(
         File(enMemoria),
         fit: BoxFit.cover,
-        cacheWidth: 320,
-        cacheHeight: 180,
-        filterQuality: FilterQuality.low,
+        cacheWidth: 480,
+        filterQuality: FilterQuality.medium,
         errorBuilder: (context, error, stackTrace) => _fallbackIcono(),
       );
     }
@@ -824,9 +823,8 @@ class TarjetaVideoCuadricula extends StatelessWidget {
         return Image.file(
           File(rutaMiniatura),
           fit: BoxFit.cover,
-          cacheWidth: 320,
-          cacheHeight: 180,
-          filterQuality: FilterQuality.low,
+          cacheWidth: 480,
+          filterQuality: FilterQuality.medium,
           errorBuilder: (context, error, stackTrace) => _fallbackIcono(),
         );
       },

@@ -12,10 +12,10 @@ class ColoresApp {
   static const Color acentoPrimario = Color(
     0xFFFF2A54,
   ); // Carmesí cinemático vibrante
-  static const Color acentoSecundario = Color(0xFFFF5252);
+  static const Color acentoSecundario = Color(0xFFFF6B8B);
   static const Color acentoAmbar = Color(
-    0xFFF59E0B,
-  ); // Ámbar dorado cálido para barras de progreso y tiempo
+    0xFF38BDF8,
+  ); // Cian celeste moderno para tiempo restante e indicadores de estado (reemplaza el naranja)
   static const Color acentoAzul = Color(
     0xFF2979FF,
   ); // Azul para brillo/indicadores

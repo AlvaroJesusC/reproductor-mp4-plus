@@ -24,10 +24,13 @@ class TemasApp {
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: false,
+        shape: Border(
+          bottom: BorderSide(color: ColoresApp.bordeSutil, width: 0.8),
+        ),
         systemOverlayStyle: SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
           statusBarIconBrightness: Brightness.light,
-          systemNavigationBarColor: ColoresApp.fondoPrincipal,
+          systemNavigationBarColor: ColoresApp.fondoSecundario,
           systemNavigationBarIconBrightness: Brightness.light,
         ),
         titleTextStyle: TextStyle(

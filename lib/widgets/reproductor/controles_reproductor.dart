@@ -512,7 +512,8 @@ class _BarraProgresoAislada extends StatelessWidget {
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 13,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
               const SizedBox(width: 8),
@@ -542,17 +543,15 @@ class _BarraProgresoAislada extends StatelessWidget {
                           },
                           child: SliderTheme(
                             data: const SliderThemeData(
-                              trackHeight: 3,
-                              activeTrackColor: Color(
-                                0xFFFF5722,
-                              ), // Naranja vibrante
+                              trackHeight: 3.5,
+                              activeTrackColor: ColoresApp.barraProgreso,
                               secondaryActiveTrackColor: Color(0x66FFFFFF),
                               inactiveTrackColor: Color(0x33FFFFFF),
-                              thumbColor: Color(0xFFFF5722),
+                              thumbColor: ColoresApp.barraProgreso,
                               thumbShape: RoundSliderThumbShape(
                                 enabledThumbRadius: 6.5,
                               ),
-                              overlayColor: Color(0x33FF5722),
+                              overlayColor: Color(0x38FF2A54),
                               overlayShape: RoundSliderOverlayShape(
                                 overlayRadius: 14,
                               ),
@@ -587,9 +586,10 @@ class _BarraProgresoAislada extends StatelessWidget {
                     ? '- ${ModeloVideo.formatearTiempo(restanteMs)}'
                     : '00:00',
                 style: const TextStyle(
-                  color: Colors.white,
+                  color: Colors.white70,
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
+                  fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
             ],

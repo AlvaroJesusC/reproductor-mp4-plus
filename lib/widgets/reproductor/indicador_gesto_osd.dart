@@ -333,7 +333,7 @@ class IndicadorGestoOSD extends StatelessWidget {
               value: ratioProgreso,
               backgroundColor: ColoresApp.barraFondo,
               valueColor: const AlwaysStoppedAnimation<Color>(
-                ColoresApp.acentoAmbar,
+                ColoresApp.barraProgreso,
               ),
               minHeight: 5,
             ),

@@ -567,49 +567,56 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
             ),
           ),
         ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _indicePestana,
-          onDestinationSelected: (idx) {
-            setState(() {
-              _indicePestana = idx;
-            });
-          },
-          destinations: [
-            NavigationDestination(
-              icon: Badge(
-                isLabelVisible: _videosRecientes.isNotEmpty,
-                label: Text('${_videosRecientes.length}'),
-                backgroundColor: ColoresApp.acentoPrimario,
-                child: const Icon(Icons.history_rounded),
+        bottomNavigationBar: Container(
+          decoration: const BoxDecoration(
+            border: Border(
+              top: BorderSide(color: ColoresApp.bordeSutil, width: 0.8),
+            ),
+          ),
+          child: NavigationBar(
+            selectedIndex: _indicePestana,
+            onDestinationSelected: (idx) {
+              setState(() {
+                _indicePestana = idx;
+              });
+            },
+            destinations: [
+              NavigationDestination(
+                icon: Badge(
+                  isLabelVisible: _videosRecientes.isNotEmpty,
+                  label: Text('${_videosRecientes.length}'),
+                  backgroundColor: ColoresApp.acentoPrimario,
+                  child: const Icon(Icons.history_rounded),
+                ),
+                selectedIcon: Badge(
+                  isLabelVisible: _videosRecientes.isNotEmpty,
+                  label: Text('${_videosRecientes.length}'),
+                  backgroundColor: ColoresApp.acentoPrimario,
+                  child: const Icon(
+                    Icons.history_rounded,
+                    color: ColoresApp.acentoPrimario,
+                  ),
+                ),
+                label: 'Continuar',
               ),
-              selectedIcon: Badge(
-                isLabelVisible: _videosRecientes.isNotEmpty,
-                label: Text('${_videosRecientes.length}'),
-                backgroundColor: ColoresApp.acentoPrimario,
-                child: const Icon(
-                  Icons.history_rounded,
+              NavigationDestination(
+                icon: const Icon(Icons.movie_filter_outlined),
+                selectedIcon: const Icon(
+                  Icons.movie_filter_rounded,
                   color: ColoresApp.acentoPrimario,
                 ),
+                label: 'Videos (${_todosLosVideos.length})',
               ),
-              label: 'Continuar',
-            ),
-            NavigationDestination(
-              icon: const Icon(Icons.movie_filter_outlined),
-              selectedIcon: const Icon(
-                Icons.movie_filter_rounded,
-                color: ColoresApp.acentoPrimario,
+              NavigationDestination(
+                icon: const Icon(Icons.folder_outlined),
+                selectedIcon: const Icon(
+                  Icons.folder_rounded,
+                  color: ColoresApp.acentoPrimario,
+                ),
+                label: 'Carpetas (${_carpetasVideos.length})',
               ),
-              label: 'Videos (${_todosLosVideos.length})',
-            ),
-            NavigationDestination(
-              icon: const Icon(Icons.folder_outlined),
-              selectedIcon: const Icon(
-                Icons.folder_rounded,
-                color: ColoresApp.acentoPrimario,
-              ),
-              label: 'Carpetas (${_carpetasVideos.length})',
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     ),

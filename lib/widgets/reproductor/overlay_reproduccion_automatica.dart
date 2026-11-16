@@ -527,9 +527,8 @@ class OverlayReproduccionAutomatica extends StatelessWidget {
       return Image.file(
         File(enMemoria),
         fit: BoxFit.cover,
-        cacheWidth: 320,
-        cacheHeight: 180,
-        filterQuality: FilterQuality.low,
+        cacheWidth: 400,
+        filterQuality: FilterQuality.medium,
         errorBuilder: (context, error, stackTrace) => _fallbackMiniatura(),
       );
     }
@@ -542,9 +541,8 @@ class OverlayReproduccionAutomatica extends StatelessWidget {
         return Image.file(
           File(ruta),
           fit: BoxFit.cover,
-          cacheWidth: 320,
-          cacheHeight: 180,
-          filterQuality: FilterQuality.low,
+          cacheWidth: 400,
+          filterQuality: FilterQuality.medium,
           errorBuilder: (context, error, stackTrace) => _fallbackMiniatura(),
         );
       },

@@ -79,8 +79,8 @@ class ServicioMiniaturasVideo {
       Uint8List? bytes = await VideoThumbnail.thumbnailData(
         video: video.ruta,
         imageFormat: ImageFormat.JPEG,
-        maxWidth: 160,
-        quality: 58,
+        maxWidth: 640,
+        quality: 86,
         timeMs: _calcularFotogramaMs(video),
       );
 
@@ -88,8 +88,8 @@ class ServicioMiniaturasVideo {
       bytes ??= await VideoThumbnail.thumbnailData(
         video: video.ruta,
         imageFormat: ImageFormat.JPEG,
-        maxWidth: 160,
-        quality: 58,
+        maxWidth: 640,
+        quality: 86,
         timeMs: 1000,
       );
 
@@ -108,8 +108,23 @@ class ServicioMiniaturasVideo {
     // A diferencia del directorio temporal, este sobrevive a limpiezas
     // automáticas frecuentes y permite aperturas posteriores instantáneas.
     final soporteApp = await getApplicationSupportDirectory();
-    final directorio = Directory(
+
+    // Limpiar silenciosamente el directorio antiguo de baja resolución (160px) si existía
+    final directorioAntiguo = Directory(
       p.join(soporteApp.path, 'cache_miniaturas_video'),
+    );
+    unawaited(
+      directorioAntiguo.exists().then((existe) async {
+        if (existe) {
+          try {
+            await directorioAntiguo.delete(recursive: true);
+          } catch (_) {}
+        }
+      }),
+    );
+
+    final directorio = Directory(
+      p.join(soporteApp.path, 'cache_miniaturas_video_hd'),
     );
     if (!await directorio.exists()) {
       await directorio.create(recursive: true);
