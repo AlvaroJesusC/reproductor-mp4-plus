@@ -525,24 +525,6 @@ class _BarraProgresoAislada extends StatelessWidget {
                       clipBehavior: Clip.none,
                       alignment: Alignment.centerLeft,
                       children: [
-                        // El Slider reserva el radio del thumb en ambos extremos.
-                        // Aplicar el mismo margen evita que la pista gris sobresalga.
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6.5),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(2),
-                            child: LinearProgressIndicator(
-                              value: ratioBuffer,
-                              backgroundColor: Colors.white.withValues(
-                                alpha: 0.2,
-                              ),
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.white.withValues(alpha: 0.4),
-                              ),
-                              minHeight: 3,
-                            ),
-                          ),
-                        ),
                         Listener(
                           behavior: HitTestBehavior.translucent,
                           onPointerDown: (evento) {
@@ -564,7 +546,8 @@ class _BarraProgresoAislada extends StatelessWidget {
                               activeTrackColor: Color(
                                 0xFFFF5722,
                               ), // Naranja vibrante
-                              inactiveTrackColor: Colors.transparent,
+                              secondaryActiveTrackColor: Color(0x66FFFFFF),
+                              inactiveTrackColor: Color(0x33FFFFFF),
                               thumbColor: Color(0xFFFF5722),
                               thumbShape: RoundSliderThumbShape(
                                 enabledThumbRadius: 6.5,
@@ -576,6 +559,7 @@ class _BarraProgresoAislada extends StatelessWidget {
                             ),
                             child: Slider(
                               value: valorProgreso,
+                              secondaryTrackValue: ratioBuffer,
                               min: 0.0,
                               max: 1.0,
                               onChangeStart: alIniciarCambioProgreso,
