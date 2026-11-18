@@ -1,11 +1,55 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
 import '../modelos/modelo_carpeta_video.dart';
 import '../modelos/modelo_video.dart';
 import 'servicio_preferencias.dart';
 
 /// Servicio de alto rendimiento para escanear, organizar y explorar jerárquicamente carpetas y videos de forma no bloqueante.
 class ServicioAlmacenamientoVideo {
+  static const MethodChannel _canalMetadatos = MethodChannel(
+    'com.example.reproductormp4/metadatos',
+  );
+
+  /// Completa en segundo plano las duraciones faltantes (duracionTotalMs <= 0)
+  /// usando MediaMetadataRetriever nativo en Android y las guarda en caché local.
+  static Future<bool> completarDuracionesFaltantes(
+    List<ModeloVideo> videos,
+  ) async {
+    if (!Platform.isAndroid || videos.isEmpty) return false;
+    final pendientes = videos.where((v) => v.duracionTotalMs <= 0).toList();
+    if (pendientes.isEmpty) return false;
+
+    final Map<String, int> descubiertas = {};
+    const tamanoLote = 8;
+    for (int i = 0; i < pendientes.length; i += tamanoLote) {
+      final fin = (i + tamanoLote).clamp(0, pendientes.length);
+      final lote = pendientes.sublist(i, fin);
+      try {
+        final resultado = await _canalMetadatos.invokeMapMethod<String, dynamic>(
+          'obtenerDuraciones',
+          {'rutas': lote.map((v) => v.ruta).toList()},
+        );
+        if (resultado == null) continue;
+        for (final video in lote) {
+          final valor = resultado[video.ruta];
+          if (valor is int && valor > 0) {
+            video.duracionTotalMs = valor;
+            descubiertas[video.ruta] = valor;
+          }
+        }
+      } catch (_) {
+        break;
+      }
+    }
+
+    if (descubiertas.isNotEmpty) {
+      await ServicioPreferencias.guardarDuracionesEnLote(descubiertas);
+      return true;
+    }
+    return false;
+  }
+
   /// Extensiones de video soportadas.
   static const Set<String> extensionesSoportadas = {
     'mp4',

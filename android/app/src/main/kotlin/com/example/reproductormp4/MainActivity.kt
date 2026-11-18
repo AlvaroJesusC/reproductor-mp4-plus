@@ -3,15 +3,24 @@ package com.example.reproductormp4
 import android.app.PictureInPictureParams
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.media.MediaMetadataRetriever
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Rational
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private val CANAL_PIP = "com.example.reproductormp4/pip"
+    private val CANAL_METADATOS = "com.example.reproductormp4/metadatos"
     private var canalMetodos: MethodChannel? = null
+    private var canalMetadatos: MethodChannel? = null
+    private val ejecutorMetadatos: ExecutorService = Executors.newFixedThreadPool(3)
+    private val manejadorPrincipal = Handler(Looper.getMainLooper())
     private var autoPipHabilitado = false
     private var aspectNumerator = 16
     private var aspectDenominator = 9
@@ -49,6 +58,47 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+
+        canalMetadatos = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CANAL_METADATOS)
+        canalMetadatos?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "obtenerDuracionMs" -> {
+                    val ruta = call.argument<String>("ruta")
+                    if (ruta.isNullOrEmpty() || ejecutorMetadatos.isShutdown) {
+                        result.success(0L)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        ejecutorMetadatos.execute {
+                            val duracionMs = extraerDuracionMs(ruta)
+                            manejadorPrincipal.post {
+                                try {
+                                    result.success(duracionMs)
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    } catch (_: Exception) {
+                        result.success(0L)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun extraerDuracionMs(ruta: String): Long {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(ruta)
+            val durStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            durStr?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+        } catch (_: Exception) {
+            0L
+        } finally {
+            try {
+                retriever.release()
+            } catch (_: Exception) {}
         }
     }
 
@@ -125,5 +175,10 @@ class MainActivity : FlutterActivity() {
         if (isFinishing) {
             canalMetodos?.invokeMethod("alCerrarPipNativo", null)
         }
+    }
+
+    override fun onDestroy() {
+        ejecutorMetadatos.shutdownNow()
+        super.onDestroy()
     }
 }

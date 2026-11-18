@@ -62,7 +62,30 @@ class ServicioPreferencias {
     return prefs.getInt('dur_$rutaVideo') ?? 0;
   }
 
-  /// Borra el progreso guardado de un video específico.
+  /// Guarda la duración total conocida de un video en milisegundos.
+  static Future<void> guardarDuracionVideo(
+    String rutaVideo,
+    int duracionTotalMs,
+  ) async {
+    if (duracionTotalMs <= 0) return;
+    final prefs = await _obtenerInstancia();
+    await prefs.setInt('dur_$rutaVideo', duracionTotalMs);
+  }
+
+  /// Guarda en lote duraciones descubiertas para evitar re-leer metadatos.
+  static Future<void> guardarDuracionesEnLote(
+    Map<String, int> duracionesMs,
+  ) async {
+    if (duracionesMs.isEmpty) return;
+    final prefs = await _obtenerInstancia();
+    for (final entry in duracionesMs.entries) {
+      if (entry.value > 0 && (prefs.getInt('dur_${entry.key}') ?? 0) <= 0) {
+        await prefs.setInt('dur_${entry.key}', entry.value);
+      }
+    }
+  }
+
+  /// Borra el progreso guardado de un video específico sin perder su duración conocida.
   static Future<void> borrarProgresoVideo(String rutaVideo) async {
     final prefs = await _obtenerInstancia();
     final completados = await obtenerCompletados();
@@ -75,7 +98,6 @@ class ServicioPreferencias {
     }
     await Future.wait([
       prefs.remove('pos_$rutaVideo'),
-      prefs.remove('dur_$rutaVideo'),
       prefs.remove('fecha_$rutaVideo'),
     ]);
   }
@@ -319,6 +341,13 @@ class ServicioPreferencias {
             video.estaCompletado = completados.contains(video.ruta);
             if (video.estaCompletado) {
               video.posicionGuardadaMs = 0;
+            } else {
+              video.posicionGuardadaMs =
+                  prefs.getInt('pos_${video.ruta}') ?? video.posicionGuardadaMs;
+            }
+            final dur = prefs.getInt('dur_${video.ruta}');
+            if (dur != null && dur > 0) {
+              video.duracionTotalMs = dur;
             }
             return video;
           }).toList();

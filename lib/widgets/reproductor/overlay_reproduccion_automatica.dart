@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../constantes/colores_app.dart';
 import '../../modelos/modelo_video.dart';
+import '../../servicios/servicio_duracion_video.dart';
 import '../../servicios/servicio_miniaturas_video.dart';
 
 /// Superposición moderna estilo YouTube que aparece al terminar un video si hay
@@ -349,13 +350,7 @@ class OverlayReproduccionAutomatica extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      siguienteVideo.tamanoLegible,
-                      style: const TextStyle(
-                        color: Color(0xFF8B949E),
-                        fontSize: 11.5,
-                      ),
-                    ),
+                    _TextoDuracionSiguiente(video: siguienteVideo),
                   ],
                 ),
               ),
@@ -451,13 +446,7 @@ class OverlayReproduccionAutomatica extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 3),
-                Text(
-                  siguienteVideo.tamanoLegible,
-                  style: const TextStyle(
-                    color: Color(0xFF8B949E),
-                    fontSize: 11.5,
-                  ),
-                ),
+                _TextoDuracionSiguiente(video: siguienteVideo),
               ],
             ),
           ),
@@ -554,6 +543,41 @@ class OverlayReproduccionAutomatica extends StatelessWidget {
       color: const Color(0xFF21262D),
       child: const Center(
         child: Icon(Icons.movie_rounded, color: Color(0xFF8B949E), size: 26),
+      ),
+    );
+  }
+}
+
+class _TextoDuracionSiguiente extends StatelessWidget {
+  final ModeloVideo video;
+
+  const _TextoDuracionSiguiente({required this.video});
+
+  @override
+  Widget build(BuildContext context) {
+    final enMemoria = ServicioDuracionVideo.obtenerDuracionEnMemoria(video);
+    if (enMemoria != null) {
+      return _construirTexto(enMemoria);
+    }
+
+    return FutureBuilder<int>(
+      future: ServicioDuracionVideo.obtenerDuracion(video),
+      builder: (context, snapshot) {
+        return _construirTexto(snapshot.data ?? video.duracionTotalMs);
+      },
+    );
+  }
+
+  Widget _construirTexto(int duracionMs) {
+    final texto = duracionMs > 0
+        ? 'Duración ${ModeloVideo.formatearTiempo(duracionMs)}'
+        : '--:--';
+    return Text(
+      texto,
+      style: const TextStyle(
+        color: Color(0xFF8B949E),
+        fontSize: 11.5,
+        fontFeatures: [FontFeature.tabularFigures()],
       ),
     );
   }

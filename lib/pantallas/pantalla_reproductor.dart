@@ -15,6 +15,7 @@ import '../modelos/modelo_capitulo_video.dart';
 import '../modelos/modelo_opciones_reproduccion.dart';
 import '../modelos/modelo_video.dart';
 import '../servicios/servicio_almacenamiento_video.dart';
+import '../servicios/servicio_duracion_video.dart';
 import '../servicios/servicio_preferencias.dart';
 import '../widgets/dialogo_informacion_video.dart';
 import '../widgets/reproductor/boton_saltar_capitulo.dart';
@@ -572,7 +573,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _suscripciones.add(
       _reproductor.stream.duration.listen((dur) {
         if (mounted && dur > Duration.zero && !_estaSaliendo) {
-          _videoActual.duracionTotalMs = dur.inMilliseconds;
+          ServicioDuracionVideo.registrarDuracionEnMemoria(
+            _videoActual,
+            dur.inMilliseconds,
+          );
           _actualizarProgreso(duracionMs: dur.inMilliseconds);
           _controladorVistaPrevia.actualizarDuracion(dur.inMilliseconds);
           if (!_capitulosConsultadosTrasDuracion &&
@@ -822,6 +826,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         posicionMs: posMs,
         duracionTotalMs: durMs,
       );
+    } else if (durMs > 0) {
+      _videoActual.duracionTotalMs = durMs;
+      await ServicioPreferencias.guardarDuracionVideo(_videoActual.ruta, durMs);
     }
   }
 
@@ -1753,6 +1760,18 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   void _mostrarHojaPlaylist() {
     if (_estaSaliendo) return;
+    if (_estaInicializado && _indiceActual >= 0 && _indiceActual < _playlist.length) {
+      final posMs = _reproductor.state.position.inMilliseconds;
+      final durMs = _reproductor.state.duration.inMilliseconds;
+      if (durMs > 0) {
+        _videoActual.duracionTotalMs = durMs;
+        _playlist[_indiceActual].duracionTotalMs = durMs;
+      }
+      if (posMs > 0) {
+        _videoActual.posicionGuardadaMs = posMs;
+        _playlist[_indiceActual].posicionGuardadaMs = posMs;
+      }
+    }
     HojaPlaylistReproductor.mostrar(
       context,
       listaVideos: _playlist,

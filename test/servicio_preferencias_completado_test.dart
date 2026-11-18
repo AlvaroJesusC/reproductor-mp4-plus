@@ -98,5 +98,42 @@ void main() {
       expect(lista.first.estaCompletado, false);
       expect(lista.first.posicionGuardadaMs, 0);
     });
+
+    test('borrarProgresoVideo conserva la duración conocida del archivo', () async {
+      const ruta = '/storage/video6.mp4';
+      await ServicioPreferencias.guardarProgresoVideo(
+        rutaVideo: ruta,
+        posicionMs: 30000,
+        duracionTotalMs: 1441000,
+      );
+
+      await ServicioPreferencias.borrarProgresoVideo(ruta);
+
+      expect(await ServicioPreferencias.obtenerPosicionGuardada(ruta), 0);
+      expect(await ServicioPreferencias.esVideoCompletado(ruta), false);
+      expect(await ServicioPreferencias.obtenerDuracionGuardada(ruta), 1441000);
+    });
+
+    test('obtenerCacheBiblioteca hidrata la duración guardada en preferencias', () async {
+      const ruta = '/storage/video7.mp4';
+      final video = ModeloVideo(
+        id: 'video7',
+        ruta: ruta,
+        nombre: 'video7.mp4',
+        nombreSinExtension: 'video7',
+        tamanoBytes: 1024,
+        fechaModificacion: DateTime.now(),
+        carpetaContenedora: 'storage',
+        extension: 'mp4',
+        duracionTotalMs: 0,
+      );
+
+      await ServicioPreferencias.guardarCacheBiblioteca([video]);
+      await ServicioPreferencias.guardarDuracionVideo(ruta, 1440000);
+
+      final lista = await ServicioPreferencias.obtenerCacheBiblioteca();
+      expect(lista.length, 1);
+      expect(lista.first.duracionTotalMs, 1440000);
+    });
   });
 }
