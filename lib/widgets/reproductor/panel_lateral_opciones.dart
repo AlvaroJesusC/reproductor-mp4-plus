@@ -14,6 +14,9 @@ class PanelLateralOpciones extends StatelessWidget {
   final VoidCallback? alMostrarInfoVideo;
   final VoidCallback alAlternarOrientacion;
   final VoidCallback? alLiberarOrientacion;
+  final int cantidadCapitulos;
+  final VoidCallback? alMostrarModalCapitulos;
+  final VoidCallback? alSiguienteCapitulo;
 
   const PanelLateralOpciones({
     super.key,
@@ -27,6 +30,9 @@ class PanelLateralOpciones extends StatelessWidget {
     this.alMostrarInfoVideo,
     required this.alAlternarOrientacion,
     this.alLiberarOrientacion,
+    this.cantidadCapitulos = 0,
+    this.alMostrarModalCapitulos,
+    this.alSiguienteCapitulo,
   });
 
   /// Despliega el panel lateral desde la derecha a la izquierda de forma instantánea y fluida.
@@ -42,6 +48,9 @@ class PanelLateralOpciones extends StatelessWidget {
     VoidCallback? alMostrarInfoVideo,
     required VoidCallback alAlternarOrientacion,
     VoidCallback? alLiberarOrientacion,
+    int cantidadCapitulos = 0,
+    VoidCallback? alMostrarModalCapitulos,
+    VoidCallback? alSiguienteCapitulo,
   }) {
     return showGeneralDialog(
       context: context,
@@ -65,6 +74,9 @@ class PanelLateralOpciones extends StatelessWidget {
               alMostrarInfoVideo: alMostrarInfoVideo,
               alAlternarOrientacion: alAlternarOrientacion,
               alLiberarOrientacion: alLiberarOrientacion,
+              cantidadCapitulos: cantidadCapitulos,
+              alMostrarModalCapitulos: alMostrarModalCapitulos,
+              alSiguienteCapitulo: alSiguienteCapitulo,
             ),
           ),
         );
@@ -199,6 +211,35 @@ class PanelLateralOpciones extends StatelessWidget {
                         alMostrarModalVelocidad();
                       },
                     ),
+
+                    if (alMostrarModalCapitulos != null)
+                      _construirElemento(
+                        context,
+                        icono: Icons.bookmarks_rounded,
+                        colorIcono: cantidadCapitulos > 0
+                            ? ColoresApp.acentoPrimario
+                            : Colors.white60,
+                        titulo: 'Capítulos / Episodios',
+                        subtitulo: cantidadCapitulos > 0
+                            ? '$cantidadCapitulos'
+                            : '0',
+                        alPresionar: () {
+                          Navigator.of(context).pop();
+                          alMostrarModalCapitulos?.call();
+                        },
+                      ),
+
+                    if (cantidadCapitulos > 0 && alSiguienteCapitulo != null)
+                      _construirElemento(
+                        context,
+                        icono: Icons.skip_next_rounded,
+                        colorIcono: ColoresApp.acentoAmbar,
+                        titulo: 'Siguiente capítulo',
+                        alPresionar: () {
+                          Navigator.of(context).pop();
+                          alSiguienteCapitulo?.call();
+                        },
+                      ),
 
                     if (alMostrarSincronizacion != null)
                       _construirElemento(

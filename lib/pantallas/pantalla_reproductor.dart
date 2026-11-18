@@ -11,6 +11,7 @@ import 'package:volume_controller/volume_controller.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../constantes/colores_app.dart';
+import '../modelos/modelo_capitulo_video.dart';
 import '../modelos/modelo_opciones_reproduccion.dart';
 import '../modelos/modelo_video.dart';
 import '../servicios/servicio_almacenamiento_video.dart';
@@ -20,6 +21,7 @@ import '../widgets/reproductor/controles_reproductor.dart';
 import '../widgets/reproductor/hoja_playlist_reproductor.dart';
 import '../widgets/reproductor/indicador_gesto_osd.dart';
 import '../widgets/reproductor/modal_aspecto.dart';
+import '../widgets/reproductor/modal_capitulos.dart';
 import '../widgets/reproductor/modal_pistas_audio_subtitulos.dart';
 import '../widgets/reproductor/modal_sincronizacion_pistas.dart';
 import '../widgets/reproductor/modal_temporizador_apagado.dart';
@@ -142,6 +144,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     5,
   );
   final ValueNotifier<int> _versionOSD = ValueNotifier(0);
+  final ValueNotifier<List<CapituloVideo>> _capitulosNotifier = ValueNotifier(
+    const [],
+  );
+  bool _capitulosConsultadosTrasDuracion = false;
 
   /// Control reactivo de la opacidad del filtro de atenuación nocturna (sub-cero).
   final ValueNotifier<double> _opacidadFiltroNoche = ValueNotifier(0.0);
@@ -229,6 +235,8 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   int _posicionInicialSeekMs = 0;
   int _posicionSeekArrastreMs = 0;
   int _diferenciaSeekSegundos = 0;
+  String _tituloCapituloOSD = '';
+  int _indiceCapituloOSD = 0;
   Timer? _temporizadorOcultarOSD;
 
   // Fast-Seeking por Keyframes para scrubber y gestos a 144Hz sin micro-congelamientos
@@ -361,6 +369,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
           _videoActual.ruta,
           duracionInicialMs: _videoActual.duracionTotalMs,
         );
+        unawaited(_cargarCapitulosDesdeMetadatos());
         _reiniciarTemporizadorOcultarControles();
         return;
       }
@@ -562,6 +571,11 @@ class _PantallaReproductorState extends State<PantallaReproductor>
           _videoActual.duracionTotalMs = dur.inMilliseconds;
           _actualizarProgreso(duracionMs: dur.inMilliseconds);
           _controladorVistaPrevia.actualizarDuracion(dur.inMilliseconds);
+          if (!_capitulosConsultadosTrasDuracion &&
+              _capitulosNotifier.value.isEmpty) {
+            _capitulosConsultadosTrasDuracion = true;
+            unawaited(_cargarCapitulosDesdeMetadatos());
+          }
         }
       }),
     );
@@ -638,6 +652,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
       // Abrir pausado, esperar sus metadatos y restaurar antes de reproducir.
       await _reproductor.open(Media(_videoActual.ruta), play: false);
+      unawaited(_cargarCapitulosDesdeMetadatos());
 
       // Cargar subtítulos locales automáticamente si existen
       unawaited(_buscarYCargarSubtitulosLocales());
@@ -1161,6 +1176,110 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     );
   }
 
+  /// Lee los capítulos/episodios incrustados en los metadatos del archivo mediante libmpv.
+  Future<void> _cargarCapitulosDesdeMetadatos() async {
+    if (!mounted || _estaSaliendo || !_reproductorCreado) return;
+    final rutaObjetivo = _videoActual.ruta;
+    try {
+      final dynamic platform = _reproductor.platform;
+      if (platform == null) return;
+
+      final String rawJson = await platform.getProperty('chapter-list');
+      var capitulos = CapituloVideo.parsearDesdeJsonMpv(rawJson);
+
+      if (capitulos.isEmpty) {
+        final String countStr = await platform.getProperty('chapters');
+        final count = int.tryParse(countStr.trim()) ?? 0;
+        if (count > 0) {
+          final leidos = <CapituloVideo>[];
+          for (int i = 0; i < count; i++) {
+            final titleStr = (await platform.getProperty(
+              'chapter-list/$i/title',
+            )).toString().trim();
+            final timeStr = (await platform.getProperty(
+              'chapter-list/$i/time',
+            )).toString().trim();
+            final timeSec = double.tryParse(timeStr);
+            if (timeSec == null || timeSec.isNaN || timeSec.isInfinite) {
+              continue;
+            }
+            leidos.add(
+              CapituloVideo(
+                indice: leidos.length,
+                titulo: titleStr.isNotEmpty ? titleStr : 'Capítulo ${i + 1}',
+                inicioMs: (timeSec * 1000).round().clamp(0, 1 << 31),
+              ),
+            );
+          }
+          capitulos = leidos;
+        }
+      }
+
+      if (!mounted || _estaSaliendo || _videoActual.ruta != rutaObjetivo) {
+        return;
+      }
+      _capitulosNotifier.value = capitulos;
+      _controladorVistaPrevia.actualizarCapitulos(capitulos);
+    } catch (_) {}
+  }
+
+  /// Abre la ventana modal "Ir al capítulo..." con todos los episodios del video.
+  void _mostrarModalCapitulos() {
+    if (!_estaInicializado || _estaSaliendo) return;
+    final capitulos = _capitulosNotifier.value;
+    final indiceActual = CapituloVideo.indiceEnPosicion(
+      capitulos,
+      _reproductor.state.position.inMilliseconds,
+    );
+    ModalCapitulos.mostrar(
+      context,
+      capitulos: capitulos,
+      indiceActual: indiceActual,
+      alSeleccionarCapitulo: _irACapitulo,
+    );
+  }
+
+  /// Salta al capítulo seleccionado sin exponer un Future al árbol de widgets.
+  void _irACapitulo(CapituloVideo capitulo) {
+    unawaited(_saltarACapitulo(capitulo));
+  }
+
+  Future<void> _saltarACapitulo(CapituloVideo capitulo) async {
+    if (!_estaInicializado || _estaSaliendo) return;
+    try {
+      await _reproductor.seek(Duration(milliseconds: capitulo.inicioMs));
+      if (!mounted || _estaSaliendo) return;
+      _actualizarProgreso(posicionMs: capitulo.inicioMs);
+      _mostrarOSDCapitulo(capitulo);
+      _reiniciarTemporizadorOcultarControles();
+    } catch (_) {}
+  }
+
+  /// Avanza directamente al siguiente capítulo disponible en los metadatos.
+  void _irASiguienteCapitulo() {
+    if (!_estaInicializado || _estaSaliendo) return;
+    final capitulos = _capitulosNotifier.value;
+    if (capitulos.isEmpty) return;
+
+    final indiceActual = CapituloVideo.indiceEnPosicion(
+      capitulos,
+      _reproductor.state.position.inMilliseconds,
+    );
+    final siguienteIndice = indiceActual < 0 ? 0 : indiceActual + 1;
+    if (siguienteIndice < capitulos.length) {
+      _irACapitulo(capitulos[siguienteIndice]);
+    }
+  }
+
+  void _mostrarOSDCapitulo(CapituloVideo capitulo) {
+    _tipoGestoActual = TipoGestoOSD.capitulo;
+    _tituloCapituloOSD = capitulo.titulo;
+    _indiceCapituloOSD = capitulo.indice + 1;
+    _posicionSeekArrastreMs = capitulo.inicioMs;
+    _notificarCambioOSD();
+    _programarOcultarOSD();
+  }
+
   /// Alterna el bloqueo de pantalla y ancla o libera la orientación.
   Future<void> _alternarBloqueo() async {
     HapticFeedback.mediumImpact();
@@ -1658,6 +1777,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
     final nuevoIndice = _playlist.indexWhere((v) => v.ruta == nuevoVideo.ruta);
     _restablecerZoom(animado: false);
+    _capitulosConsultadosTrasDuracion = false;
+    _capitulosNotifier.value = const [];
+    _controladorVistaPrevia.actualizarCapitulos(const []);
     setState(() {
       _videoActual = nuevoVideo;
       if (nuevoIndice >= 0) _indiceActual = nuevoIndice;
@@ -2158,6 +2280,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _estadoReproduccion.dispose();
     _segundosRestantesAutoplayNotifier.dispose();
     _versionOSD.dispose();
+    _capitulosNotifier.dispose();
     _opacidadFiltroNoche.dispose();
     _controladorVistaPrevia.dispose();
 
@@ -2396,6 +2519,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                         posicionObjetivoMs: _posicionSeekArrastreMs,
                         duracionTotalMs: _videoActual.duracionTotalMs,
                         porcentajeZoom: _nivelZoomNotifier.value,
+                        tituloCapitulo: _tituloCapituloOSD,
+                        indiceCapitulo: _indiceCapituloOSD,
+                        totalCapitulos: _capitulosNotifier.value.length,
                       ),
                     );
                   },
@@ -2459,6 +2585,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                             ? _minimizarAPip()
                             : null,
                         alActivarPipNativo: () => ServicioPipNativo.activarPip(),
+                        capitulosNotifier: _capitulosNotifier,
+                        alMostrarModalCapitulos: _mostrarModalCapitulos,
+                        alSiguienteCapitulo: _irASiguienteCapitulo,
                         alAlternarBloqueo: _alternarBloqueo,
                         alMostrarModalVelocidad: () {
                           showDialog(

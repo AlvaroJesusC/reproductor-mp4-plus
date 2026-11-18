@@ -15,6 +15,9 @@ class IndicadorGestoOSD extends StatelessWidget {
   final int posicionObjetivoMs; // Tiempo resultante
   final int duracionTotalMs;
   final double porcentajeZoom;
+  final String tituloCapitulo;
+  final int indiceCapitulo;
+  final int totalCapitulos;
 
   const IndicadorGestoOSD({
     super.key,
@@ -24,6 +27,9 @@ class IndicadorGestoOSD extends StatelessWidget {
     this.posicionObjetivoMs = 0,
     this.duracionTotalMs = 0,
     this.porcentajeZoom = 1.0,
+    this.tituloCapitulo = '',
+    this.indiceCapitulo = 0,
+    this.totalCapitulos = 0,
   });
 
   @override
@@ -77,7 +83,68 @@ class IndicadorGestoOSD extends StatelessWidget {
 
       case TipoGestoOSD.zoom:
         return _construirPastillaZoom(context);
+
+      case TipoGestoOSD.capitulo:
+        return _construirPastillaCapitulo(context);
     }
+  }
+
+  /// Pastilla OSD flotante superior para cambio de capítulo.
+  Widget _construirPastillaCapitulo(BuildContext context) {
+    final insets = MediaQuery.paddingOf(context);
+    final prefijo = totalCapitulos > 0
+        ? 'Cap. $indiceCapitulo/$totalCapitulos · '
+        : '';
+    final tiempo = ModeloVideo.formatearTiempo(posicionObjetivoMs);
+
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Padding(
+        padding: EdgeInsets.only(top: insets.top + 28, left: 24, right: 24),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          decoration: BoxDecoration(
+            color: ColoresApp.fondoOSD,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: ColoresApp.bordeOSD,
+              width: 1.0,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 14,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.bookmarks_rounded,
+                color: ColoresApp.acentoPrimario,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  '$prefijo$tituloCapitulo ($tiempo)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// Pastilla OSD flotante superior para el zoom multitáctil (🔍 145%).

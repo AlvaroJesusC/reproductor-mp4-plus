@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../constantes/colores_app.dart';
+import '../../modelos/modelo_capitulo_video.dart';
 import '../../modelos/modelo_video.dart';
 
 /// Estado reactivo e inmutable de la burbuja de vista previa sobre la barra de progreso.
@@ -17,6 +18,7 @@ class EstadoVistaPreviaScrubber {
   final int duracionMs;
   final bool motorListo;
   final bool enBusquedaFina;
+  final String? tituloCapitulo;
 
   const EstadoVistaPreviaScrubber({
     this.visible = false,
@@ -25,6 +27,7 @@ class EstadoVistaPreviaScrubber {
     this.duracionMs = 0,
     this.motorListo = false,
     this.enBusquedaFina = false,
+    this.tituloCapitulo,
   });
 
   EstadoVistaPreviaScrubber copiarCon({
@@ -34,6 +37,8 @@ class EstadoVistaPreviaScrubber {
     int? duracionMs,
     bool? motorListo,
     bool? enBusquedaFina,
+    String? tituloCapitulo,
+    bool limpiarCapitulo = false,
   }) {
     return EstadoVistaPreviaScrubber(
       visible: visible ?? this.visible,
@@ -42,6 +47,9 @@ class EstadoVistaPreviaScrubber {
       duracionMs: duracionMs ?? this.duracionMs,
       motorListo: motorListo ?? this.motorListo,
       enBusquedaFina: enBusquedaFina ?? this.enBusquedaFina,
+      tituloCapitulo: limpiarCapitulo
+          ? null
+          : (tituloCapitulo ?? this.tituloCapitulo),
     );
   }
 
@@ -54,7 +62,8 @@ class EstadoVistaPreviaScrubber {
             other.posicionMs == posicionMs &&
             other.duracionMs == duracionMs &&
             other.motorListo == motorListo &&
-            other.enBusquedaFina == enBusquedaFina);
+            other.enBusquedaFina == enBusquedaFina &&
+            other.tituloCapitulo == tituloCapitulo);
   }
 
   @override
@@ -65,6 +74,7 @@ class EstadoVistaPreviaScrubber {
         duracionMs,
         motorListo,
         enBusquedaFina,
+        tituloCapitulo,
       );
 }
 
@@ -94,6 +104,7 @@ class ControladorVistaPreviaScrubber {
   String? _rutaAbiertaEnMotor;
   bool _inicializandoMotor = false;
   bool _desechado = false;
+  List<CapituloVideo> _capitulos = const [];
 
   // Control de arrastre y búsqueda fina (Fine Scrubbing)
   bool _arrastrando = false;
@@ -128,6 +139,25 @@ class ControladorVistaPreviaScrubber {
         }
       },
     );
+  }
+
+  /// Actualiza la lista de capítulos para mostrar el nombre del segmento en la burbuja.
+  void actualizarCapitulos(List<CapituloVideo> capitulos) {
+    if (_desechado) return;
+    _capitulos = capitulos;
+    if (_arrastrando) {
+      final titulo = _tituloCapituloEn(estado.value.posicionMs);
+      estado.value = estado.value.copiarCon(
+        tituloCapitulo: titulo,
+        limpiarCapitulo: titulo == null,
+      );
+    }
+  }
+
+  String? _tituloCapituloEn(int posicionMs) {
+    final idx = CapituloVideo.indiceEnPosicion(_capitulos, posicionMs);
+    if (idx < 0 || idx >= _capitulos.length) return null;
+    return _capitulos[idx].titulo;
   }
 
   /// Actualiza la duración conocida si el motor principal la resuelve después.
@@ -177,12 +207,15 @@ class ControladorVistaPreviaScrubber {
     final objetivoMs = duracionMs > 0
         ? (_ratioEfectivo * duracionMs).round()
         : 0;
+    final tituloCapitulo = _tituloCapituloEn(objetivoMs);
     estado.value = estado.value.copiarCon(
       visible: true,
       ratio: _ratioEfectivo,
       posicionMs: objetivoMs,
       duracionMs: duracionMs,
       enBusquedaFina: false,
+      tituloCapitulo: tituloCapitulo,
+      limpiarCapitulo: tituloCapitulo == null,
     );
     _programarSeekPreview(objetivoMs, inmediato: true);
   }
@@ -212,12 +245,15 @@ class ControladorVistaPreviaScrubber {
     final objetivoMs = duracionMs > 0
         ? (_ratioEfectivo * duracionMs).round()
         : 0;
+    final tituloCapitulo = _tituloCapituloEn(objetivoMs);
 
     estado.value = estado.value.copiarCon(
       visible: true,
       ratio: _ratioEfectivo,
       posicionMs: objetivoMs,
       duracionMs: duracionMs,
+      tituloCapitulo: tituloCapitulo,
+      limpiarCapitulo: tituloCapitulo == null,
     );
 
     _programarSeekPreview(objetivoMs);
@@ -464,6 +500,7 @@ class BurbujaVistaPreviaScrubber extends StatelessWidget {
                       tiempoFormateado: ModeloVideo.formatearTiempo(
                         estado.posicionMs,
                       ),
+                      tituloCapitulo: estado.tituloCapitulo,
                       enBusquedaFina: estado.enBusquedaFina,
                     ),
                   ],
@@ -627,15 +664,18 @@ class _PlaceholderPreview extends StatelessWidget {
 
 class _PastillaTiempoPreview extends StatelessWidget {
   final String tiempoFormateado;
+  final String? tituloCapitulo;
   final bool enBusquedaFina;
 
   const _PastillaTiempoPreview({
     required this.tiempoFormateado,
+    this.tituloCapitulo,
     required this.enBusquedaFina,
   });
 
   @override
   Widget build(BuildContext context) {
+    final tieneCapitulo = tituloCapitulo != null && tituloCapitulo!.isNotEmpty;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
       decoration: BoxDecoration(
@@ -648,14 +688,41 @@ class _PastillaTiempoPreview extends StatelessWidget {
           width: 0.8,
         ),
       ),
-      child: Text(
-        tiempoFormateado,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12.5,
-          fontWeight: FontWeight.w600,
-          fontFeatures: [FontFeature.tabularFigures()],
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            tiempoFormateado,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          if (tieneCapitulo) ...[
+            const Text(
+              ' · ',
+              style: TextStyle(
+                color: Colors.white60,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            Flexible(
+              child: Text(
+                tituloCapitulo!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

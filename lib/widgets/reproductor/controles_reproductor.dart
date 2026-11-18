@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../constantes/colores_app.dart';
+import '../../modelos/modelo_capitulo_video.dart';
 import '../../modelos/modelo_opciones_reproduccion.dart';
 import '../../modelos/modelo_video.dart';
 import 'panel_lateral_opciones.dart';
@@ -50,6 +52,9 @@ class ControlesReproductor extends StatelessWidget {
   final VoidCallback? alRestablecerZoom;
   final VoidCallback? alMinimizar;
   final VoidCallback? alActivarPipNativo;
+  final ValueNotifier<List<CapituloVideo>>? capitulosNotifier;
+  final VoidCallback? alMostrarModalCapitulos;
+  final VoidCallback? alSiguienteCapitulo;
 
   const ControlesReproductor({
     super.key,
@@ -70,6 +75,9 @@ class ControlesReproductor extends StatelessWidget {
     this.alRestablecerZoom,
     this.alMinimizar,
     this.alActivarPipNativo,
+    this.capitulosNotifier,
+    this.alMostrarModalCapitulos,
+    this.alSiguienteCapitulo,
     required this.alAlternarPlayPause,
     this.alIniciarCambioProgreso,
     required this.alCambiarProgreso,
@@ -327,9 +335,18 @@ class ControlesReproductor extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (capitulosNotifier != null)
+            _BarraCapituloHud(
+              capitulosNotifier: capitulosNotifier!,
+              estadoProgreso: estadoProgreso,
+              alMostrarModalCapitulos: alMostrarModalCapitulos,
+              alSiguienteCapitulo: alSiguienteCapitulo,
+            ),
+
           // FILA 1: TIEMPOS Y BARRA DE PROGRESO (Aislado reactivamente)
           _BarraProgresoAislada(
             estadoProgreso: estadoProgreso,
+            capitulosNotifier: capitulosNotifier,
             controladorVistaPrevia: controladorVistaPrevia,
             esHorizontal: esPantallaCompletaHorizontal,
             alIniciarCambioProgreso: alIniciarCambioProgreso,
@@ -442,6 +459,14 @@ class ControlesReproductor extends StatelessWidget {
               constraints: const BoxConstraints(),
               tooltip: 'Más opciones',
               onPressed: () {
+                final capitulos = capitulosNotifier?.value ?? const [];
+                final idxCap = CapituloVideo.indiceEnPosicion(
+                  capitulos,
+                  estadoProgreso.value.posicionMs,
+                );
+                final tieneSiguienteCap =
+                    capitulos.isNotEmpty && (idxCap + 1) < capitulos.length;
+
                 PanelLateralOpciones.mostrar(
                   context,
                   velocidadActual: velocidadActual,
@@ -454,6 +479,10 @@ class ControlesReproductor extends StatelessWidget {
                   alMostrarInfoVideo: alMostrarInfoVideo,
                   alAlternarOrientacion: alAlternarOrientacion,
                   alLiberarOrientacion: alLiberarOrientacion,
+                  cantidadCapitulos: capitulos.length,
+                  alMostrarModalCapitulos: alMostrarModalCapitulos,
+                  alSiguienteCapitulo:
+                      tieneSiguienteCap ? alSiguienteCapitulo : null,
                 );
               },
             ),
@@ -464,11 +493,171 @@ class ControlesReproductor extends StatelessWidget {
   }
 }
 
+/// Pastilla compacta sobre la barra de progreso que muestra el capítulo actual,
+/// permite abrir el modal "Ir al capítulo..." o saltar al siguiente en 1 toque.
+class _BarraCapituloHud extends StatelessWidget {
+  final ValueNotifier<List<CapituloVideo>> capitulosNotifier;
+  final ValueNotifier<EstadoProgresoReproductor> estadoProgreso;
+  final VoidCallback? alMostrarModalCapitulos;
+  final VoidCallback? alSiguienteCapitulo;
+
+  const _BarraCapituloHud({
+    required this.capitulosNotifier,
+    required this.estadoProgreso,
+    this.alMostrarModalCapitulos,
+    this.alSiguienteCapitulo,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: ValueListenableBuilder<List<CapituloVideo>>(
+        valueListenable: capitulosNotifier,
+        builder: (context, capitulos, _) {
+          if (capitulos.isEmpty) return const SizedBox.shrink();
+
+          return ValueListenableBuilder<EstadoProgresoReproductor>(
+            valueListenable: estadoProgreso,
+            builder: (context, progreso, _) {
+              final idx = CapituloVideo.indiceEnPosicion(
+                capitulos,
+                progreso.posicionMs,
+              );
+              final capActual = idx >= 0 ? capitulos[idx] : capitulos.first;
+              final haySiguiente = (idx + 1) < capitulos.length;
+              final etiquetaIndice = idx >= 0
+                  ? '${idx + 1}/${capitulos.length}'
+                  : '0/${capitulos.length}';
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.48),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.16),
+                        width: 0.9,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: InkWell(
+                            borderRadius: BorderRadius.horizontal(
+                              left: const Radius.circular(18),
+                              right: haySiguiente
+                                  ? Radius.zero
+                                  : const Radius.circular(18),
+                            ),
+                            onTap: alMostrarModalCapitulos,
+                            child: Padding(
+                              padding: const EdgeInsetsDirectional.fromSTEB(
+                                10,
+                                5,
+                                10,
+                                5,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.bookmarks_rounded,
+                                    color: ColoresApp.acentoPrimario,
+                                    size: 14,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      capActual.titulo,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    etiquetaIndice,
+                                    style: const TextStyle(
+                                      color: Colors.white60,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      fontFeatures: [
+                                        FontFeature.tabularFigures(),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (haySiguiente && alSiguienteCapitulo != null) ...[
+                          Container(
+                            width: 1,
+                            height: 16,
+                            color: Colors.white.withValues(alpha: 0.16),
+                          ),
+                          InkWell(
+                            borderRadius: const BorderRadius.horizontal(
+                              right: Radius.circular(18),
+                            ),
+                            onTap: alSiguienteCapitulo,
+                            child: const Padding(
+                              padding: EdgeInsetsDirectional.fromSTEB(
+                                9,
+                                5,
+                                10,
+                                5,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Siguiente',
+                                    style: TextStyle(
+                                      color: ColoresApp.acentoAmbar,
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  SizedBox(width: 3),
+                                  Icon(
+                                    Icons.skip_next_rounded,
+                                    color: ColoresApp.acentoAmbar,
+                                    size: 16,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
 /// Widget aislado para la barra de progreso y etiquetas de tiempo.
 /// Al estar aislado con su propio ValueListenableBuilder y RepaintBoundary, el avance continuo del tiempo
 /// redibuja únicamente este componente, dejando estáticos todos los botones y degradados.
 class _BarraProgresoAislada extends StatelessWidget {
   final ValueNotifier<EstadoProgresoReproductor> estadoProgreso;
+  final ValueNotifier<List<CapituloVideo>>? capitulosNotifier;
   final ControladorVistaPreviaScrubber? controladorVistaPrevia;
   final bool esHorizontal;
   final ValueChanged<double>? alIniciarCambioProgreso;
@@ -477,6 +666,7 @@ class _BarraProgresoAislada extends StatelessWidget {
 
   const _BarraProgresoAislada({
     required this.estadoProgreso,
+    this.capitulosNotifier,
     this.controladorVistaPrevia,
     this.esHorizontal = false,
     this.alIniciarCambioProgreso,
@@ -518,7 +708,7 @@ class _BarraProgresoAislada extends StatelessWidget {
               ),
               const SizedBox(width: 8),
 
-              // Barra de progreso (Slider) con indicador de buffer y vista previa flotante
+              // Barra de progreso (Slider) con separadores de capítulos y vista previa flotante
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
@@ -567,6 +757,25 @@ class _BarraProgresoAislada extends StatelessWidget {
                             ),
                           ),
                         ),
+                        if (capitulosNotifier != null && duracionTotalMs > 0)
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: ValueListenableBuilder<List<CapituloVideo>>(
+                                valueListenable: capitulosNotifier!,
+                                builder: (context, capitulos, _) {
+                                  if (capitulos.length <= 1) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return CustomPaint(
+                                    painter: _PintorMarcadoresCapitulos(
+                                      capitulos: capitulos,
+                                      duracionTotalMs: duracionTotalMs,
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
                         if (controladorVistaPrevia != null)
                           BurbujaVistaPreviaScrubber(
                             controlador: controladorVistaPrevia!,
@@ -597,6 +806,53 @@ class _BarraProgresoAislada extends StatelessWidget {
         },
       ),
     );
+  }
+}
+
+/// Dibuja divisiones verticales sutiles sobre la pista del Slider en cada inicio de capítulo.
+class _PintorMarcadoresCapitulos extends CustomPainter {
+  static const double _paddingPista = 14.0;
+  final List<CapituloVideo> capitulos;
+  final int duracionTotalMs;
+
+  final Paint _pinturaMarca = Paint()
+    ..color = Colors.white.withValues(alpha: 0.85)
+    ..strokeWidth = 1.8
+    ..strokeCap = StrokeCap.round;
+
+  final Paint _pinturaSombra = Paint()
+    ..color = Colors.black.withValues(alpha: 0.65)
+    ..strokeWidth = 3.2
+    ..strokeCap = StrokeCap.round;
+
+  _PintorMarcadoresCapitulos({
+    required this.capitulos,
+    required this.duracionTotalMs,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (duracionTotalMs <= 0 || capitulos.length <= 1) return;
+    final anchoUtil = size.width - (_paddingPista * 2);
+    if (anchoUtil <= 0) return;
+
+    final centroY = size.height / 2;
+    final topY = centroY - 4.5;
+    final bottomY = centroY + 4.5;
+
+    for (final cap in capitulos) {
+      if (cap.inicioMs <= 0 || cap.inicioMs >= duracionTotalMs) continue;
+      final ratio = (cap.inicioMs / duracionTotalMs).clamp(0.0, 1.0);
+      final x = _paddingPista + (ratio * anchoUtil);
+      canvas.drawLine(Offset(x, topY), Offset(x, bottomY), _pinturaSombra);
+      canvas.drawLine(Offset(x, topY), Offset(x, bottomY), _pinturaMarca);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PintorMarcadoresCapitulos oldDelegate) {
+    return oldDelegate.duracionTotalMs != duracionTotalMs ||
+        !listEquals(oldDelegate.capitulos, capitulos);
   }
 }
 
