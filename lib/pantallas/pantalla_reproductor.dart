@@ -17,6 +17,7 @@ import '../modelos/modelo_video.dart';
 import '../servicios/servicio_almacenamiento_video.dart';
 import '../servicios/servicio_preferencias.dart';
 import '../widgets/dialogo_informacion_video.dart';
+import '../widgets/reproductor/boton_saltar_capitulo.dart';
 import '../widgets/reproductor/controles_reproductor.dart';
 import '../widgets/reproductor/hoja_playlist_reproductor.dart';
 import '../widgets/reproductor/indicador_gesto_osd.dart';
@@ -147,6 +148,8 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   final ValueNotifier<List<CapituloVideo>> _capitulosNotifier = ValueNotifier(
     const [],
   );
+  final ValueNotifier<CapituloSaltarActivo?> _capituloSaltarNotifier =
+      ValueNotifier(null);
   bool _capitulosConsultadosTrasDuracion = false;
 
   /// Control reactivo de la opacidad del filtro de atenuación nocturna (sub-cero).
@@ -484,6 +487,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             );
           }
         }
+        _actualizarCapituloSaltar(posMs, durMs);
 
         // Throttling de disco cada 5s
         final ahora = DateTime.now().millisecondsSinceEpoch;
@@ -1220,6 +1224,62 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       }
       _capitulosNotifier.value = capitulos;
       _controladorVistaPrevia.actualizarCapitulos(capitulos);
+      _actualizarCapituloSaltar(
+        _reproductor.state.position.inMilliseconds,
+        _reproductor.state.duration.inMilliseconds,
+      );
+    } catch (_) {}
+  }
+
+  void _actualizarCapituloSaltar(int posMs, int durMs) {
+    if (!mounted || _estaSaliendo) return;
+    final capitulos = _capitulosNotifier.value;
+    final nuevo = capitulos.isEmpty
+        ? null
+        : CapituloVideo.capituloSaltarEnPosicion(
+            capitulos: capitulos,
+            posicionMs: posMs,
+            duracionTotalMs: durMs,
+            haySiguienteVideo: _indiceActual < _playlist.length - 1,
+          );
+    if (_capituloSaltarNotifier.value != nuevo) {
+      _capituloSaltarNotifier.value = nuevo;
+    }
+  }
+
+  /// Ejecuta el salto rápido estilo Crunchyroll (Skip Intro / Outro / Credits).
+  void _ejecutarSaltoCapituloEspecial(CapituloSaltarActivo salto) {
+    if (!_estaInicializado || _estaSaliendo) return;
+    HapticFeedback.lightImpact();
+    _capituloSaltarNotifier.value = null;
+
+    if (salto.avanzaASiguienteVideo) {
+      _reproducirSiguienteVideo();
+      return;
+    }
+
+    final destinoMs = salto.destinoMs;
+    if (destinoMs == null) return;
+
+    final capitulos = _capitulosNotifier.value;
+    final idxSiguiente = salto.capituloOrigen.indice + 1;
+    if (idxSiguiente >= 0 &&
+        idxSiguiente < capitulos.length &&
+        capitulos[idxSiguiente].inicioMs == destinoMs) {
+      _irACapitulo(capitulos[idxSiguiente]);
+      return;
+    }
+
+    unawaited(_saltarATiempoMs(destinoMs));
+  }
+
+  Future<void> _saltarATiempoMs(int destinoMs) async {
+    if (!_estaInicializado || _estaSaliendo) return;
+    try {
+      await _reproductor.seek(Duration(milliseconds: destinoMs));
+      if (!mounted || _estaSaliendo) return;
+      _actualizarProgreso(posicionMs: destinoMs);
+      _reiniciarTemporizadorOcultarControles();
     } catch (_) {}
   }
 
@@ -1250,6 +1310,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       await _reproductor.seek(Duration(milliseconds: capitulo.inicioMs));
       if (!mounted || _estaSaliendo) return;
       _actualizarProgreso(posicionMs: capitulo.inicioMs);
+      _actualizarCapituloSaltar(
+        capitulo.inicioMs,
+        _reproductor.state.duration.inMilliseconds,
+      );
       _mostrarOSDCapitulo(capitulo);
       _reiniciarTemporizadorOcultarControles();
     } catch (_) {}
@@ -1779,6 +1843,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _restablecerZoom(animado: false);
     _capitulosConsultadosTrasDuracion = false;
     _capitulosNotifier.value = const [];
+    _capituloSaltarNotifier.value = null;
     _controladorVistaPrevia.actualizarCapitulos(const []);
     setState(() {
       _videoActual = nuevoVideo;
@@ -2281,6 +2346,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _segundosRestantesAutoplayNotifier.dispose();
     _versionOSD.dispose();
     _capitulosNotifier.dispose();
+    _capituloSaltarNotifier.dispose();
     _opacidadFiltroNoche.dispose();
     _controladorVistaPrevia.dispose();
 
@@ -2631,6 +2697,17 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                         alMostrarInfoVideo: _mostrarInformacionVideo,
                       ),
                     ),
+                  ),
+
+                // 3.5 Botón contextual estilo Crunchyroll (Saltar intro / outro / créditos)
+                if (_estaInicializado &&
+                    !_pantallaBloqueada &&
+                    !_mostrandoCuentaRegresivaAutoplay)
+                  BotonSaltarCapitulo(
+                    capituloSaltarNotifier: _capituloSaltarNotifier,
+                    velocidad2xNotifier: _velocidadRapida2xActiva,
+                    controlesVisibles: _mostrarControles,
+                    alSaltar: _ejecutarSaltoCapituloEspecial,
                   ),
 
                 // 4. Pastilla flotante de velocidad 2x rápida estilo YouTube (aislada con ValueListenableBuilder)

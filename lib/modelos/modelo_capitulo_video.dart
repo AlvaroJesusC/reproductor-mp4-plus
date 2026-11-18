@@ -2,9 +2,63 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'modelo_video.dart';
 
+/// Categoría de segmento saltable detectado en los metadatos del video.
+enum TipoCapituloSaltar {
+  intro('Saltar intro'),
+  outro('Saltar outro'),
+  creditos('Saltar créditos');
+
+  final String etiquetaBoton;
+  const TipoCapituloSaltar(this.etiquetaBoton);
+}
+
+/// Estado inmutable del botón contextual de salto (Skip Intro / Outro / Credits).
+@immutable
+class CapituloSaltarActivo {
+  final CapituloVideo capituloOrigen;
+  final TipoCapituloSaltar tipo;
+  final int? destinoMs;
+  final bool avanzaASiguienteVideo;
+
+  const CapituloSaltarActivo({
+    required this.capituloOrigen,
+    required this.tipo,
+    this.destinoMs,
+    this.avanzaASiguienteVideo = false,
+  });
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other is CapituloSaltarActivo &&
+            other.capituloOrigen == capituloOrigen &&
+            other.tipo == tipo &&
+            other.destinoMs == destinoMs &&
+            other.avanzaASiguienteVideo == avanzaASiguienteVideo);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        capituloOrigen,
+        tipo,
+        destinoMs,
+        avanzaASiguienteVideo,
+      );
+}
+
 /// Representa un capítulo o episodio embebido en los metadatos del video (MKV/MP4).
 @immutable
 class CapituloVideo {
+  static final RegExp _regexCreditos = RegExp(
+    r'(?:^|[\s:.\-_/\[\(])(credits|creditos|end\s+credits|closing\s+credits)(?:$|[\s:.\-_\]\)])',
+  );
+  static final RegExp _regexOutro = RegExp(
+    r'(?:^|[\s:.\-_/\[\(])(outro|ending|ed\s*\d*|cierre)(?:$|[\s:.\-_\]\)])',
+  );
+  static final RegExp _regexIntro = RegExp(
+    r'(?:^|[\s:.\-_/\[\(])(intro|introduccion|opening|apertura|op\s*\d*)(?:$|[\s:.\-_\]\)])',
+  );
+
   final int indice;
   final String titulo;
   final int inicioMs;
@@ -17,6 +71,89 @@ class CapituloVideo {
 
   /// Tiempo de inicio formateado de forma legible (mm:ss o hh:mm:ss).
   String get tiempoLegible => ModeloVideo.formatearTiempo(inicioMs);
+
+  /// Detecta si el título del capítulo corresponde a Intro, Outro o Créditos.
+  static TipoCapituloSaltar? detectarTipoSaltar(String titulo) {
+    final normalizado = _normalizarTexto(titulo);
+    if (normalizado.isEmpty) return null;
+    if (_regexCreditos.hasMatch(normalizado)) {
+      return TipoCapituloSaltar.creditos;
+    }
+    if (_regexOutro.hasMatch(normalizado)) {
+      return TipoCapituloSaltar.outro;
+    }
+    if (_regexIntro.hasMatch(normalizado)) {
+      return TipoCapituloSaltar.intro;
+    }
+    return null;
+  }
+
+  /// Determina si en [posicionMs] el video está dentro de una intro, outro o créditos.
+  static CapituloSaltarActivo? capituloSaltarEnPosicion({
+    required List<CapituloVideo> capitulos,
+    required int posicionMs,
+    required int duracionTotalMs,
+    required bool haySiguienteVideo,
+  }) {
+    if (capitulos.isEmpty || posicionMs < capitulos.first.inicioMs) {
+      return null;
+    }
+
+    int idxActual = -1;
+    for (int i = capitulos.length - 1; i >= 0; i--) {
+      if (capitulos[i].inicioMs <= posicionMs) {
+        idxActual = i;
+        break;
+      }
+    }
+    if (idxActual < 0) return null;
+
+    final cap = capitulos[idxActual];
+    final tipo = detectarTipoSaltar(cap.titulo);
+    if (tipo == null) return null;
+
+    if (idxActual + 1 < capitulos.length) {
+      return CapituloSaltarActivo(
+        capituloOrigen: cap,
+        tipo: tipo,
+        destinoMs: capitulos[idxActual + 1].inicioMs,
+      );
+    }
+
+    // Último capítulo: solo aplica salto automático para outro o créditos
+    if (tipo == TipoCapituloSaltar.intro) return null;
+
+    if (haySiguienteVideo) {
+      return CapituloSaltarActivo(
+        capituloOrigen: cap,
+        tipo: tipo,
+        avanzaASiguienteVideo: true,
+      );
+    }
+
+    if (duracionTotalMs > cap.inicioMs + 3000 &&
+        posicionMs < duracionTotalMs - 2000) {
+      return CapituloSaltarActivo(
+        capituloOrigen: cap,
+        tipo: tipo,
+        destinoMs: duracionTotalMs - 1000,
+      );
+    }
+
+    return null;
+  }
+
+  static String _normalizarTexto(String texto) {
+    return texto
+        .trim()
+        .toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ü', 'u');
+  }
 
   /// Parsea el JSON devuelto por la propiedad `chapter-list` de libmpv.
   static List<CapituloVideo> parsearDesdeJsonMpv(String jsonCrudo) {
