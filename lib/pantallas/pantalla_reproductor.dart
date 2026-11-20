@@ -196,6 +196,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
   // Opciones de reproducción
   double _velocidadActual = 1.0;
+  Timer? _temporizadorGuardarVelocidad;
   ModoRelacionAspecto _aspectoActual = ModoRelacionAspecto.ajustar;
 
   // Velocidad rápida 2x temporal al mantener pulsado (estilo YouTube)
@@ -1124,14 +1125,30 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     }
   }
 
-  /// Cambia la velocidad de reproducción.
-  Future<void> _cambiarVelocidad(double nuevaVelocidad) async {
+  /// Cambia la velocidad de reproducción en tiempo real sin bloquear el hilo UI.
+  void _cambiarVelocidad(double nuevaVelocidad) {
     if (!_estaInicializado || _estaSaliendo) return;
-    await _reproductor.setRate(nuevaVelocidad);
-    await ServicioPreferencias.guardarVelocidadPreferida(nuevaVelocidad);
-    setState(() {
-      _velocidadActual = nuevaVelocidad;
-    });
+    if ((_velocidadActual - nuevaVelocidad).abs() < 0.001) return;
+
+    _velocidadActual = nuevaVelocidad;
+    if (mounted) {
+      setState(() {});
+    }
+
+    unawaited(
+      _reproductor.setRate(nuevaVelocidad).catchError((_) {}),
+    );
+
+    _temporizadorGuardarVelocidad?.cancel();
+    _temporizadorGuardarVelocidad = Timer(
+      const Duration(milliseconds: 250),
+      () {
+        unawaited(
+          ServicioPreferencias.guardarVelocidadPreferida(nuevaVelocidad)
+              .catchError((_) {}),
+        );
+      },
+    );
   }
 
   /// Activa temporalmente la velocidad rápida 2x (o 3x si ya está en 2x) al mantener pulsado estilo YouTube.
@@ -2348,6 +2365,13 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _temporizadorOcultarBotonDesbloqueo?.cancel();
     _temporizadorApagadoTimer?.cancel();
     _temporizadorAutoplay?.cancel();
+    if (_temporizadorGuardarVelocidad?.isActive ?? false) {
+      _temporizadorGuardarVelocidad?.cancel();
+      unawaited(
+        ServicioPreferencias.guardarVelocidadPreferida(_velocidadActual)
+            .catchError((_) {}),
+      );
+    }
 
     for (final s in _suscripciones) {
       s.cancel();
@@ -2675,13 +2699,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                         alSiguienteCapitulo: _irASiguienteCapitulo,
                         alAlternarBloqueo: _alternarBloqueo,
                         alMostrarModalVelocidad: () {
-                          showDialog(
-                            context: context,
-                            barrierColor: Colors.black.withValues(alpha: 0.25),
-                            builder: (_) => ModalVelocidad(
-                              velocidadActual: _velocidadActual,
-                              alSeleccionarVelocidad: _cambiarVelocidad,
-                            ),
+                          ModalVelocidad.mostrar(
+                            context,
+                            velocidadActual: _velocidadActual,
+                            alSeleccionarVelocidad: _cambiarVelocidad,
                           );
                         },
                         alMostrarModalAspecto: () {

@@ -44,10 +44,72 @@ void main() {
     ),
   ];
 
-  testWidgets('renderiza duración, progreso, ancho compacto y expande al deslizar', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(860, 420);
+  testWidgets(
+    'se abre anclado al lateral izquierdo con animación y muestra progreso completo en horizontal',
+    (tester) async {
+      tester.view.physicalSize = const Size(860, 420);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () => HojaPlaylistReproductor.mostrar(
+                  context,
+                  listaVideos: videos,
+                  indiceActual: 0,
+                  alSeleccionarVideo: (_, _) {},
+                ),
+                child: const Text('Abrir playlist'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Abrir playlist'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+
+      // Durante la entrada animada el panel se desliza desde la izquierda
+      final rectEnEntrada = tester.getRect(
+        find.byType(HojaPlaylistReproductor),
+      );
+      expect(rectEnEntrada.left, lessThan(0.0));
+
+      await tester.pumpAndSettle();
+
+      // Anclado al borde izquierdo, altura completa y ancho compacto (<= 380px)
+      final rectPanel = tester.getRect(find.byType(HojaPlaylistReproductor));
+      expect(rectPanel.left, closeTo(0.0, 0.5));
+      expect(rectPanel.height, closeTo(420.0, 0.5));
+      expect(rectPanel.width, lessThanOrEqualTo(380.0));
+
+      // Muestra duraciones, barras de progreso, porcentajes y badges
+      expect(find.text('24:00'), findsWidgets);
+      expect(find.text('Reproduciendo · 12:00 / 24:00'), findsOneWidget);
+      expect(find.text('06:00 / 24:00 (25%)'), findsOneWidget);
+      expect(find.text('Completado · 24:00'), findsOneWidget);
+      expect(find.text('MP4'), findsNWidgets(3));
+      expect(find.byType(LinearProgressIndicator), findsNWidgets(2));
+
+      // Al cerrar, sale deslizándose hacia la izquierda sin errores
+      await tester.tap(find.byIcon(Icons.close_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+      final rectEnSalida = tester.getRect(find.byType(HojaPlaylistReproductor));
+      expect(rectEnSalida.left, lessThan(0.0));
+
+      await tester.pumpAndSettle();
+      expect(find.byType(HojaPlaylistReproductor), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('se adapta sin overflow en orientación vertical', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
@@ -72,28 +134,9 @@ void main() {
     await tester.tap(find.text('Abrir playlist'));
     await tester.pumpAndSettle();
 
-    // Ancho más compacto en horizontal (<= 440px)
-    final sheetInicial = tester.getSize(find.byType(HojaPlaylistReproductor));
-    expect(sheetInicial.width, lessThanOrEqualTo(440.0));
-
-    // Muestra duraciones, barra de progreso y estado en la vista inicial
-    expect(find.text('24:00'), findsWidgets);
-    expect(find.text('Reproduciendo · 12:00 / 24:00'), findsOneWidget);
-    expect(find.text('06:00 / 24:00'), findsOneWidget);
-    expect(find.byType(LinearProgressIndicator), findsNWidgets(2));
-
-    // Deslizar hacia arriba desde el encabezado expande el modal y muestra más detalle
-    await tester.drag(
-      find.text('Lista de Videos (3)'),
-      const Offset(0, -180),
-    );
-    await tester.pumpAndSettle();
-
-    final sheetExpandido = tester.getSize(find.byType(HojaPlaylistReproductor));
-    expect(sheetExpandido.height, greaterThan(sheetInicial.height));
-
-    expect(find.text('Completado · 24:00'), findsOneWidget);
-    expect(find.text('MP4'), findsNWidgets(3));
-    expect(find.text('06:00 / 24:00 (25%)'), findsOneWidget);
+    final rectPanel = tester.getRect(find.byType(HojaPlaylistReproductor));
+    expect(rectPanel.left, closeTo(0.0, 0.5));
+    expect(rectPanel.width, lessThan(360.0));
+    expect(tester.takeException(), isNull);
   });
 }

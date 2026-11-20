@@ -52,50 +52,59 @@ class PanelLateralOpciones extends StatelessWidget {
     VoidCallback? alMostrarModalCapitulos,
     VoidCallback? alSiguienteCapitulo,
   }) {
-    return showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'Cerrar opciones',
-      // Barrera sin oscurecer para que el resto del video siga viéndose al 100%
-      barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 220),
-      pageBuilder: (ctx, anim, secondaryAnim) {
-        return Align(
-          alignment: Alignment.centerRight,
-          child: RepaintBoundary(
-            child: PanelLateralOpciones(
-              velocidadActual: velocidadActual,
-              esPantallaCompletaHorizontal: esPantallaCompletaHorizontal,
-              zoomActivo: zoomActivo,
-              alRestablecerZoom: alRestablecerZoom,
-              alActivarPipNativo: alActivarPipNativo,
-              alMostrarModalVelocidad: alMostrarModalVelocidad,
-              alMostrarSincronizacion: alMostrarSincronizacion,
-              alMostrarInfoVideo: alMostrarInfoVideo,
-              alAlternarOrientacion: alAlternarOrientacion,
-              alLiberarOrientacion: alLiberarOrientacion,
-              cantidadCapitulos: cantidadCapitulos,
-              alMostrarModalCapitulos: alMostrarModalCapitulos,
-              alSiguienteCapitulo: alSiguienteCapitulo,
+    final reducirMovimiento = MediaQuery.disableAnimationsOf(context);
+    return Navigator.of(context, rootNavigator: true).push<void>(
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierDismissible: true,
+        barrierLabel: 'Cerrar opciones',
+        // Barrera sin oscurecer para que el resto del video siga viéndose al 100%
+        barrierColor: Colors.transparent,
+        transitionDuration: reducirMovimiento
+            ? Duration.zero
+            : const Duration(milliseconds: 220),
+        reverseTransitionDuration: reducirMovimiento
+            ? Duration.zero
+            : const Duration(milliseconds: 260),
+        pageBuilder: (ctx, anim, secondaryAnim) {
+          return Align(
+            alignment: Alignment.centerRight,
+            child: RepaintBoundary(
+              child: PanelLateralOpciones(
+                velocidadActual: velocidadActual,
+                esPantallaCompletaHorizontal: esPantallaCompletaHorizontal,
+                zoomActivo: zoomActivo,
+                alRestablecerZoom: alRestablecerZoom,
+                alActivarPipNativo: alActivarPipNativo,
+                alMostrarModalVelocidad: alMostrarModalVelocidad,
+                alMostrarSincronizacion: alMostrarSincronizacion,
+                alMostrarInfoVideo: alMostrarInfoVideo,
+                alAlternarOrientacion: alAlternarOrientacion,
+                alLiberarOrientacion: alLiberarOrientacion,
+                cantidadCapitulos: cantidadCapitulos,
+                alMostrarModalCapitulos: alMostrarModalCapitulos,
+                alSiguienteCapitulo: alSiguienteCapitulo,
+              ),
             ),
-          ),
-        );
-      },
-      transitionBuilder: (ctx, anim, secondaryAnim, child) {
-        final animacionCurva = CurvedAnimation(
-          parent: anim,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
-        );
+          );
+        },
+        transitionsBuilder: (ctx, anim, secondaryAnim, child) {
+          if (reducirMovimiento) return child;
+          final animacionCurva = CurvedAnimation(
+            parent: anim,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInOutCubic,
+          );
 
-        return SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(1.0, 0.0),
-            end: Offset.zero,
-          ).animate(animacionCurva),
-          child: child,
-        );
-      },
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(1.0, 0.0),
+              end: Offset.zero,
+            ).animate(animacionCurva),
+            child: child,
+          );
+        },
+      ),
     );
   }
 

@@ -10,18 +10,13 @@ import '../../servicios/servicio_duracion_video.dart';
 import '../../servicios/servicio_miniaturas_video.dart';
 import '../../servicios/servicio_preferencias.dart';
 
-/// Hoja deslizable inferior (Bottom Sheet) compacta y expandible que muestra la
-/// lista de reproducción con miniaturas 16:9, duración y progreso en tiempo real.
+/// Panel lateral izquierdo cinemático que muestra la lista de reproducción con
+/// miniaturas 16:9, duración, progreso en tiempo real y animación fluida de
+/// entrada y salida desde el borde izquierdo (opuesto al panel de ajustes).
 class HojaPlaylistReproductor extends StatefulWidget {
   final List<ModeloVideo> listaVideos;
   final int indiceActual;
   final bool reproduccionAutomatica;
-  final ScrollController? scrollController;
-  final DraggableScrollableController? sheetController;
-  final ValueNotifier<bool>? expandidoNotifier;
-  final double tamanoInicial;
-  final double tamanoMinimo;
-  final double tamanoMaximo;
   final void Function(ModeloVideo video, int nuevoIndice) alSeleccionarVideo;
   final ValueChanged<bool>? alAlternarReproduccionAutomatica;
 
@@ -30,45 +25,74 @@ class HojaPlaylistReproductor extends StatefulWidget {
     required this.listaVideos,
     required this.indiceActual,
     this.reproduccionAutomatica = true,
-    this.scrollController,
-    this.sheetController,
-    this.expandidoNotifier,
-    this.tamanoInicial = 0.56,
-    this.tamanoMinimo = 0.34,
-    this.tamanoMaximo = 0.94,
     required this.alSeleccionarVideo,
     this.alAlternarReproduccionAutomatica,
   });
 
-  static void mostrar(
+  /// Despliega la lista de reproducción desde el lateral izquierdo con
+  /// animación fluida de deslizamiento y desvanecimiento.
+  static Future<void> mostrar(
     BuildContext context, {
     required List<ModeloVideo> listaVideos,
     required int indiceActual,
     bool reproduccionAutomatica = true,
     required void Function(ModeloVideo video, int nuevoIndice)
-        alSeleccionarVideo,
+    alSeleccionarVideo,
     ValueChanged<bool>? alAlternarReproduccionAutomatica,
   }) {
-    final tamano = MediaQuery.sizeOf(context);
-    final esHorizontal = tamano.width > tamano.height;
-    final anchoMaximo = esHorizontal
-        ? (tamano.width * 0.54).clamp(340.0, 440.0)
-        : (tamano.width * 0.94).clamp(300.0, 440.0);
+    final reducirMovimiento = MediaQuery.disableAnimationsOf(context);
+    return Navigator.of(context, rootNavigator: true).push<void>(
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierDismissible: true,
+        barrierLabel: 'Cerrar lista de videos',
+        // Barrera transparente para mantener el video visible en el centro y derecha
+        barrierColor: Colors.transparent,
+        transitionDuration: reducirMovimiento
+            ? Duration.zero
+            : const Duration(milliseconds: 240),
+        reverseTransitionDuration: reducirMovimiento
+            ? Duration.zero
+            : const Duration(milliseconds: 280),
+        pageBuilder: (ctx, anim, secondaryAnim) {
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: RepaintBoundary(
+              child: HojaPlaylistReproductor(
+                listaVideos: listaVideos,
+                indiceActual: indiceActual,
+                reproduccionAutomatica: reproduccionAutomatica,
+                alSeleccionarVideo: alSeleccionarVideo,
+                alAlternarReproduccionAutomatica:
+                    alAlternarReproduccionAutomatica,
+              ),
+            ),
+          );
+        },
+        transitionsBuilder: (ctx, anim, secondaryAnim, child) {
+          if (reducirMovimiento) return child;
+          final animacionCurva = CurvedAnimation(
+            parent: anim,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInOutCubic,
+          );
+          final opacidad = CurvedAnimation(
+            parent: anim,
+            curve: Curves.easeOut,
+            reverseCurve: Curves.easeOut,
+          );
 
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF161B22),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      constraints: BoxConstraints(maxWidth: anchoMaximo),
-      isScrollControlled: true,
-      builder: (_) => _ContenedorHojaPlaylist(
-        listaVideos: listaVideos,
-        indiceActual: indiceActual,
-        reproduccionAutomatica: reproduccionAutomatica,
-        alSeleccionarVideo: alSeleccionarVideo,
-        alAlternarReproduccionAutomatica: alAlternarReproduccionAutomatica,
+          return FadeTransition(
+            opacity: opacidad,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(-1.0, 0.0),
+                end: Offset.zero,
+              ).animate(animacionCurva),
+              child: child,
+            ),
+          );
+        },
       ),
     );
   }
@@ -78,87 +102,11 @@ class HojaPlaylistReproductor extends StatefulWidget {
       _HojaPlaylistReproductorState();
 }
 
-class _ContenedorHojaPlaylist extends StatefulWidget {
-  final List<ModeloVideo> listaVideos;
-  final int indiceActual;
-  final bool reproduccionAutomatica;
-  final void Function(ModeloVideo video, int nuevoIndice) alSeleccionarVideo;
-  final ValueChanged<bool>? alAlternarReproduccionAutomatica;
-
-  const _ContenedorHojaPlaylist({
-    required this.listaVideos,
-    required this.indiceActual,
-    required this.reproduccionAutomatica,
-    required this.alSeleccionarVideo,
-    this.alAlternarReproduccionAutomatica,
-  });
-
-  @override
-  State<_ContenedorHojaPlaylist> createState() =>
-      _ContenedorHojaPlaylistState();
-}
-
-class _ContenedorHojaPlaylistState extends State<_ContenedorHojaPlaylist> {
-  static const double _tamanoInicial = 0.56;
-  static const double _tamanoMinimo = 0.34;
-  static const double _tamanoMaximo = 0.94;
-
-  final DraggableScrollableController _sheetController =
-      DraggableScrollableController();
-  final ValueNotifier<bool> _expandidoNotifier = ValueNotifier(false);
-
-  @override
-  void initState() {
-    super.initState();
-    _sheetController.addListener(_alCambiarTamanoSheet);
-  }
-
-  void _alCambiarTamanoSheet() {
-    if (!mounted || !_sheetController.isAttached) return;
-    final expandido = _sheetController.size >= 0.74;
-    if (_expandidoNotifier.value != expandido) {
-      _expandidoNotifier.value = expandido;
-    }
-  }
-
-  @override
-  void dispose() {
-    _sheetController.removeListener(_alCambiarTamanoSheet);
-    _sheetController.dispose();
-    _expandidoNotifier.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      controller: _sheetController,
-      initialChildSize: _tamanoInicial,
-      minChildSize: _tamanoMinimo,
-      maxChildSize: _tamanoMaximo,
-      snap: true,
-      snapSizes: const [_tamanoInicial, _tamanoMaximo],
-      expand: false,
-      builder: (ctx, scrollController) => HojaPlaylistReproductor(
-        listaVideos: widget.listaVideos,
-        indiceActual: widget.indiceActual,
-        reproduccionAutomatica: widget.reproduccionAutomatica,
-        scrollController: scrollController,
-        sheetController: _sheetController,
-        expandidoNotifier: _expandidoNotifier,
-        tamanoInicial: _tamanoInicial,
-        tamanoMinimo: _tamanoMinimo,
-        tamanoMaximo: _tamanoMaximo,
-        alSeleccionarVideo: widget.alSeleccionarVideo,
-        alAlternarReproduccionAutomatica:
-            widget.alAlternarReproduccionAutomatica,
-      ),
-    );
-  }
-}
-
 class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
+  static const double _alturaEstimadaFila = 76.0;
+
   final TextEditingController _controladorFiltro = TextEditingController();
+  late final ScrollController _controladorScroll;
   String _filtroTexto = '';
   late bool _reproduccionAutomatica;
 
@@ -166,6 +114,15 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
   void initState() {
     super.initState();
     _reproduccionAutomatica = widget.reproduccionAutomatica;
+    final indiceInicial = widget.indiceActual.clamp(
+      0,
+      widget.listaVideos.isEmpty ? 0 : widget.listaVideos.length - 1,
+    );
+    _controladorScroll = ScrollController(
+      initialScrollOffset: indiceInicial > 1
+          ? (indiceInicial - 1) * _alturaEstimadaFila
+          : 0.0,
+    );
     unawaited(_refrescarMetadatosYProgreso());
   }
 
@@ -209,143 +166,131 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
   @override
   void dispose() {
     _controladorFiltro.dispose();
+    _controladorScroll.dispose();
     super.dispose();
-  }
-
-  void _alternarExpansion() {
-    final controller = widget.sheetController;
-    if (controller == null || !controller.isAttached) return;
-    final destino = controller.size >= 0.74
-        ? widget.tamanoInicial
-        : widget.tamanoMaximo;
-    unawaited(
-      controller.animateTo(
-        destino,
-        duration: const Duration(milliseconds: 240),
-        curve: Curves.easeOutCubic,
-      ),
-    );
-  }
-
-  void _alArrastrarEncabezado(DragUpdateDetails details) {
-    final controller = widget.sheetController;
-    if (controller == null || !controller.isAttached) return;
-    final altoPantalla = MediaQuery.sizeOf(context).height;
-    if (altoPantalla <= 0) return;
-
-    final deltaFraccion = -details.delta.dy / altoPantalla;
-    final nuevoTamano = (controller.size + deltaFraccion).clamp(
-      widget.tamanoMinimo,
-      widget.tamanoMaximo,
-    );
-    controller.jumpTo(nuevoTamano);
-  }
-
-  void _alSoltarEncabezado(DragEndDetails details) {
-    final controller = widget.sheetController;
-    if (controller == null || !controller.isAttached) return;
-    final velocidadY = details.primaryVelocity ?? 0.0;
-
-    if (velocidadY > 750 && controller.size <= widget.tamanoInicial + 0.04) {
-      Navigator.of(context).pop();
-      return;
-    }
-
-    final expandir = velocidadY < -280 ||
-        (velocidadY <= 280 &&
-            controller.size >=
-                (widget.tamanoInicial + widget.tamanoMaximo) / 2);
-
-    final destino = expandir ? widget.tamanoMaximo : widget.tamanoInicial;
-    unawaited(
-      controller.animateTo(
-        destino,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final tamano = MediaQuery.sizeOf(context);
+    final esHorizontal = tamano.width > tamano.height;
+    final anchoPanel = esHorizontal
+        ? (tamano.width * 0.44).clamp(300.0, 380.0)
+        : (tamano.width * 0.82).clamp(280.0, 360.0);
+
     final filtro = _filtroTexto.trim().toLowerCase();
     final listaFiltrada = widget.listaVideos.where((v) {
       if (filtro.isEmpty) return true;
       return v.nombreSinExtension.toLowerCase().contains(filtro);
     }).toList();
 
-    return Padding(
-      padding: const EdgeInsetsDirectional.fromSTEB(14, 8, 14, 6),
-      child: Column(
-        children: [
-          // Zona arrastrable superior (tirador + título) para subir/expandir fácilmente
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onVerticalDragUpdate: _alArrastrarEncabezado,
-            onVerticalDragEnd: _alSoltarEncabezado,
-            child: _EncabezadoHojaPlaylist(
-              cantidadVideos: widget.listaVideos.length,
-              reproduccionAutomatica: _reproduccionAutomatica,
-              expandidoNotifier: widget.expandidoNotifier,
-              alAlternarExpansion: widget.sheetController != null
-                  ? _alternarExpansion
-                  : null,
-              alAlternarAuto: (val) {
-                setState(() => _reproduccionAutomatica = val);
-                widget.alAlternarReproduccionAutomatica?.call(val);
-              },
+    return Material(
+      color: Colors.transparent,
+      child: GestureDetector(
+        onHorizontalDragEnd: (details) {
+          if ((details.primaryVelocity ?? 0.0) < -450.0) {
+            Navigator.of(context).pop();
+          }
+        },
+        child: Container(
+          width: anchoPanel,
+          height: double.infinity,
+          decoration: BoxDecoration(
+            // Misma translucidez cinemática que el panel derecho de ajustes
+            color: ColoresApp.fondoModalTranslucido,
+            borderRadius: const BorderRadius.horizontal(
+              right: Radius.circular(18),
             ),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.15),
+              width: 1.0,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.28),
+                blurRadius: 16,
+                offset: const Offset(4, 0),
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
+          child: SafeArea(
+            right: false,
+            child: Column(
+              children: [
+                _EncabezadoHojaPlaylist(
+                  cantidadVideos: widget.listaVideos.length,
+                  reproduccionAutomatica: _reproduccionAutomatica,
+                  alAlternarAuto: (val) {
+                    setState(() => _reproduccionAutomatica = val);
+                    widget.alAlternarReproduccionAutomatica?.call(val);
+                  },
+                ),
+                Divider(
+                  height: 1,
+                  thickness: 0.8,
+                  color: Colors.white.withValues(alpha: 0.12),
+                ),
 
-          // Buscador rápido si hay más de 5 videos
-          if (widget.listaVideos.length > 5) ...[
-            _BuscadorHojaPlaylist(
-              controlador: _controladorFiltro,
-              alCambiar: (val) => setState(() => _filtroTexto = val),
-            ),
-            const SizedBox(height: 8),
-          ],
-
-          // Lista de videos con miniaturas 16:9, duración y progreso
-          Expanded(
-            child: listaFiltrada.isEmpty
-                ? const Center(
-                    child: Text(
-                      'No se encontraron videos',
-                      style: TextStyle(color: ColoresApp.textoSecundario),
+                // Buscador rápido si hay más de 5 videos
+                if (widget.listaVideos.length > 5)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                    child: _BuscadorHojaPlaylist(
+                      controlador: _controladorFiltro,
+                      alCambiar: (val) => setState(() => _filtroTexto = val),
                     ),
-                  )
-                : ListView.builder(
-                    controller: widget.scrollController,
-                    cacheExtent: 320,
-                    physics: const BouncingScrollPhysics(
-                      parent: AlwaysScrollableScrollPhysics(),
-                    ),
-                    itemCount: listaFiltrada.length,
-                    itemBuilder: (context, index) {
-                      final video = listaFiltrada[index];
-                      final indiceReal = widget.listaVideos.indexOf(video);
-                      final esActual = indiceReal == widget.indiceActual;
+                  ),
 
-                      return RepaintBoundary(
-                        key: ValueKey(video.ruta),
-                        child: _ElementoVideoPlaylist(
-                          video: video,
-                          esActual: esActual,
-                          expandidoNotifier: widget.expandidoNotifier,
-                          alPresionar: () {
-                            Navigator.of(context).pop();
-                            if (!esActual) {
-                              widget.alSeleccionarVideo(video, indiceReal);
-                            }
+                // Lista de videos con miniaturas 16:9, duración y progreso
+                Expanded(
+                  child: listaFiltrada.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No se encontraron videos',
+                            style: TextStyle(color: ColoresApp.textoSecundario),
+                          ),
+                        )
+                      : ListView.builder(
+                          controller: _controladorScroll,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          cacheExtent: 320,
+                          physics: const BouncingScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          ),
+                          itemCount: listaFiltrada.length,
+                          itemBuilder: (context, index) {
+                            final video = listaFiltrada[index];
+                            final indiceReal = widget.listaVideos.indexOf(
+                              video,
+                            );
+                            final esActual = indiceReal == widget.indiceActual;
+
+                            return RepaintBoundary(
+                              key: ValueKey(video.ruta),
+                              child: _ElementoVideoPlaylist(
+                                video: video,
+                                esActual: esActual,
+                                alPresionar: () {
+                                  Navigator.of(context).pop();
+                                  if (!esActual) {
+                                    widget.alSeleccionarVideo(
+                                      video,
+                                      indiceReal,
+                                    );
+                                  }
+                                },
+                              ),
+                            );
                           },
                         ),
-                      );
-                    },
-                  ),
+                ),
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -354,90 +299,60 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
 class _EncabezadoHojaPlaylist extends StatelessWidget {
   final int cantidadVideos;
   final bool reproduccionAutomatica;
-  final ValueNotifier<bool>? expandidoNotifier;
-  final VoidCallback? alAlternarExpansion;
   final ValueChanged<bool> alAlternarAuto;
 
   const _EncabezadoHojaPlaylist({
     required this.cantidadVideos,
     required this.reproduccionAutomatica,
-    this.expandidoNotifier,
-    this.alAlternarExpansion,
     required this.alAlternarAuto,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Tirador visual interactivo
-        InkWell(
-          onTap: alAlternarExpansion,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
-            child: Container(
-              width: 38,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.30),
-                borderRadius: BorderRadius.circular(2),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 6, 8),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(5),
+            decoration: BoxDecoration(
+              color: ColoresApp.acentoPrimario.withValues(alpha: 0.25),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Icon(
+              Icons.playlist_play_rounded,
+              color: ColoresApp.acentoPrimario,
+              size: 17,
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              'Lista de Videos ($cantidadVideos)',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14.5,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.2,
               ),
             ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            const Icon(
-              Icons.playlist_play_rounded,
-              color: ColoresApp.acentoPrimario,
-              size: 24,
+          const SizedBox(width: 4),
+          Text(
+            'Auto',
+            style: TextStyle(
+              color: reproduccionAutomatica ? Colors.white : Colors.white54,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Lista de Videos ($cantidadVideos)',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15.5,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            if (expandidoNotifier != null && alAlternarExpansion != null)
-              ValueListenableBuilder<bool>(
-                valueListenable: expandidoNotifier!,
-                builder: (context, expandido, _) {
-                  return IconButton(
-                    icon: Icon(
-                      expandido
-                          ? Icons.keyboard_arrow_down_rounded
-                          : Icons.keyboard_arrow_up_rounded,
-                      color: Colors.white70,
-                      size: 22,
-                    ),
-                    tooltip: expandido ? 'Contraer lista' : 'Ampliar lista',
-                    padding: const EdgeInsets.all(4),
-                    constraints: const BoxConstraints(),
-                    onPressed: alAlternarExpansion,
-                  );
-                },
-              ),
-            const SizedBox(width: 4),
-            Text(
-              'Auto',
-              style: TextStyle(
-                color: reproduccionAutomatica ? Colors.white : Colors.white54,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            Transform.scale(
-              scale: 0.76,
+          ),
+          SizedBox(
+            width: 44,
+            height: 28,
+            child: Transform.scale(
+              scale: 0.72,
               child: Switch(
                 value: reproduccionAutomatica,
                 activeThumbColor: ColoresApp.acentoPrimario,
@@ -449,9 +364,19 @@ class _EncabezadoHojaPlaylist extends StatelessWidget {
                 onChanged: alAlternarAuto,
               ),
             ),
-          ],
-        ),
-      ],
+          ),
+          IconButton(
+            icon: const Icon(
+              Icons.close_rounded,
+              color: Colors.white70,
+              size: 19,
+            ),
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Cerrar',
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -468,11 +393,11 @@ class _BuscadorHojaPlaylist extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 38,
+      height: 36,
       decoration: BoxDecoration(
-        color: const Color(0xFF0D1117),
+        color: Colors.black.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
       ),
       child: TextField(
         controller: controlador,
@@ -480,11 +405,11 @@ class _BuscadorHojaPlaylist extends StatelessWidget {
         onChanged: alCambiar,
         decoration: const InputDecoration(
           hintText: 'Filtrar episodio o película...',
-          hintStyle: TextStyle(color: Color(0xFF8B949E), fontSize: 12.5),
+          hintStyle: TextStyle(color: ColoresApp.textoSecundario, fontSize: 12),
           prefixIcon: Icon(
             Icons.search_rounded,
-            color: Color(0xFF8B949E),
-            size: 18,
+            color: ColoresApp.textoSecundario,
+            size: 17,
           ),
           border: InputBorder.none,
           contentPadding: EdgeInsets.symmetric(vertical: 8),
@@ -497,53 +422,31 @@ class _BuscadorHojaPlaylist extends StatelessWidget {
 class _ElementoVideoPlaylist extends StatelessWidget {
   final ModeloVideo video;
   final bool esActual;
-  final ValueNotifier<bool>? expandidoNotifier;
   final VoidCallback alPresionar;
 
   const _ElementoVideoPlaylist({
     required this.video,
     required this.esActual,
-    this.expandidoNotifier,
     required this.alPresionar,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (expandidoNotifier == null) {
-      return _construirContenido(expandido: false);
-    }
-    return ValueListenableBuilder<bool>(
-      valueListenable: expandidoNotifier!,
-      builder: (context, expandido, _) =>
-          _construirContenido(expandido: expandido),
-    );
-  }
-
-  Widget _construirContenido({required bool expandido}) {
     final enMemoria = ServicioDuracionVideo.obtenerDuracionEnMemoria(video);
     if (enMemoria != null) {
-      return _construirContenidoConDuracion(
-        expandido: expandido,
-        duracionMs: enMemoria,
-      );
+      return _construirContenidoConDuracion(duracionMs: enMemoria);
     }
 
     return FutureBuilder<int>(
       future: ServicioDuracionVideo.obtenerDuracion(video),
       builder: (context, snapshot) {
         final duracionMs = snapshot.data ?? video.duracionTotalMs;
-        return _construirContenidoConDuracion(
-          expandido: expandido,
-          duracionMs: duracionMs,
-        );
+        return _construirContenidoConDuracion(duracionMs: duracionMs);
       },
     );
   }
 
-  Widget _construirContenidoConDuracion({
-    required bool expandido,
-    required int duracionMs,
-  }) {
+  Widget _construirContenidoConDuracion({required int duracionMs}) {
     final estaCompletado = video.estaCompletado;
     final tieneProgreso =
         video.tieneProgreso ||
@@ -556,20 +459,17 @@ class _ElementoVideoPlaylist extends StatelessWidget {
         : video.porcentajeVisto;
     final porcentajeEntero = (porcentaje * 100).round().clamp(1, 99);
 
-    final anchoMiniatura = expandido ? 114.0 : 96.0;
-    final altoMiniatura = expandido ? 64.0 : 54.0;
-
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 3.5),
       decoration: BoxDecoration(
         color: esActual
-            ? ColoresApp.acentoPrimario.withValues(alpha: 0.14)
-            : Colors.white.withValues(alpha: 0.025),
+            ? ColoresApp.acentoPrimario.withValues(alpha: 0.20)
+            : Colors.black.withValues(alpha: 0.28),
         borderRadius: BorderRadius.circular(11),
         border: Border.all(
           color: esActual
-              ? ColoresApp.acentoPrimario.withValues(alpha: 0.55)
-              : Colors.white.withValues(alpha: 0.06),
+              ? ColoresApp.acentoPrimario.withValues(alpha: 0.58)
+              : Colors.white.withValues(alpha: 0.10),
           width: esActual ? 1.1 : 0.8,
         ),
       ),
@@ -586,8 +486,8 @@ class _ElementoVideoPlaylist extends StatelessWidget {
                 _MiniaturaPlaylist(
                   video: video,
                   duracionMs: duracionMs,
-                  ancho: anchoMiniatura,
-                  alto: altoMiniatura,
+                  ancho: 96.0,
+                  alto: 54.0,
                   esActual: esActual,
                   estaCompletado: estaCompletado,
                   tieneProgreso: tieneProgreso,
@@ -601,13 +501,13 @@ class _ElementoVideoPlaylist extends StatelessWidget {
                     children: [
                       Text(
                         video.nombreSinExtension,
-                        maxLines: expandido ? 2 : 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: esActual
                               ? Colors.white
                               : const Color(0xFFF0F6FC),
-                          fontSize: 13,
+                          fontSize: 12.5,
                           fontWeight: esActual
                               ? FontWeight.bold
                               : FontWeight.w500,
@@ -622,10 +522,8 @@ class _ElementoVideoPlaylist extends StatelessWidget {
                         estaCompletado: estaCompletado,
                         tieneProgreso: tieneProgreso,
                         porcentajeEntero: porcentajeEntero,
-                        expandido: expandido,
                       ),
-                      if (expandido &&
-                          (video.extension.isNotEmpty || video.esFavorito)) ...[
+                      if (video.extension.isNotEmpty || video.esFavorito) ...[
                         const SizedBox(height: 3),
                         Row(
                           children: [
@@ -636,7 +534,7 @@ class _ElementoVideoPlaylist extends StatelessWidget {
                                   vertical: 1,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.08),
+                                  color: Colors.white.withValues(alpha: 0.10),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
@@ -871,7 +769,6 @@ class _EstadoProgresoTexto extends StatelessWidget {
   final bool estaCompletado;
   final bool tieneProgreso;
   final int porcentajeEntero;
-  final bool expandido;
 
   const _EstadoProgresoTexto({
     required this.video,
@@ -880,7 +777,6 @@ class _EstadoProgresoTexto extends StatelessWidget {
     required this.estaCompletado,
     required this.tieneProgreso,
     required this.porcentajeEntero,
-    required this.expandido,
   });
 
   @override
@@ -931,7 +827,6 @@ class _EstadoProgresoTexto extends StatelessWidget {
     }
 
     if (tieneProgreso) {
-      final sufijoPorcentaje = expandido ? ' ($porcentajeEntero%)' : '';
       return Row(
         children: [
           const Icon(
@@ -943,8 +838,8 @@ class _EstadoProgresoTexto extends StatelessWidget {
           Flexible(
             child: Text(
               duracionMs > 0
-                  ? '${video.tiempoGuardadoLegible} / $textoDuracion$sufijoPorcentaje'
-                  : '${video.tiempoGuardadoLegible}$sufijoPorcentaje',
+                  ? '${video.tiempoGuardadoLegible} / $textoDuracion ($porcentajeEntero%)'
+                  : '${video.tiempoGuardadoLegible} ($porcentajeEntero%)',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -960,9 +855,7 @@ class _EstadoProgresoTexto extends StatelessWidget {
     }
 
     return Text(
-      duracionMs > 0
-          ? (expandido ? 'Duración $textoDuracion' : textoDuracion)
-          : '--:--',
+      duracionMs > 0 ? textoDuracion : '--:--',
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: const TextStyle(
