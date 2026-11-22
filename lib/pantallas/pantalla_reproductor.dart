@@ -13,7 +13,9 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../constantes/colores_app.dart';
 import '../modelos/modelo_capitulo_video.dart';
 import '../modelos/modelo_opciones_reproduccion.dart';
+import '../modelos/modelo_orden_videos.dart';
 import '../modelos/modelo_video.dart';
+import '../servicios/logica_reanudacion_video.dart';
 import '../servicios/servicio_almacenamiento_video.dart';
 import '../servicios/servicio_duracion_video.dart';
 import '../servicios/servicio_preferencias.dart';
@@ -248,11 +250,16 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   bool _arrastrandoScrubber = false;
   DateTime _ultimoFastSeekTimestamp = DateTime.fromMillisecondsSinceEpoch(0);
 
-  // Optimización de I/O en disco (Throttling)
+  // Optimización de I/O en disco (Throttling) y control de reanudación fiable
   int _ultimoGuardadoTimestamp = 0;
   int _ultimaPosicionMs = 0;
+  int _ultimaPosicionValidaMs = 0;
+  int _objetivoReanudacionMs = 0;
+  int _idCargaVideo = 0;
   bool _progresoFinalizadoLimpiado = false;
   bool _reanudacionAplicada = false;
+  bool _usuarioHizoSeekManual = false;
+  bool _estabaReproduciendoMotor = false;
 
   // Gestión de volumen
   final VolumeController _controladorVolumen = VolumeController();
@@ -352,6 +359,14 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         _controladorVideo = widget.controladorExistente!;
         _reproductorCreado = true;
         _reanudacionAplicada = true;
+        _progresoFinalizadoLimpiado = _videoActual.estaCompletado;
+        _velocidadActual = _reproductor.state.rate > 0
+            ? _reproductor.state.rate
+            : 1.0;
+        _ultimaPosicionValidaMs = _reproductor.state.position.inMilliseconds > 0
+            ? _reproductor.state.position.inMilliseconds
+            : _videoActual.posicionGuardadaMs;
+        _estabaReproduciendoMotor = _reproductor.state.playing;
 
         _configurarSuscripcionesMotor();
         _sincronizarEstadoInterfaz();
@@ -432,12 +447,20 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     }
     _suscripciones.clear();
 
+    final idCargaSuscripcion = _idCargaVideo;
+
     // 1. Escuchar posición
     _suscripciones.add(
       _reproductor.stream.position.listen((pos) {
-        if (!mounted || _estaSaliendo || _arrastrandoScrubber) return;
+        if (!mounted ||
+            _estaSaliendo ||
+            _arrastrandoScrubber ||
+            idCargaSuscripcion != _idCargaVideo) {
+          return;
+        }
         final posMs = pos.inMilliseconds;
-        final durMs = _reproductor.state.duration.inMilliseconds;
+        final durMotorMs = _reproductor.state.duration.inMilliseconds;
+        final durMs = durMotorMs > 0 ? durMotorMs : _videoActual.duracionTotalMs;
 
         // Bucle A-B activo
         if (_buclePuntoA != null && _buclePuntoB != null) {
@@ -447,34 +470,58 @@ class _PantallaReproductorState extends State<PantallaReproductor>
           }
         }
 
+        // Si aún estamos confirmando la reanudación inicial, detectar si el motor
+        // ya aterrizó en el punto objetivo y evitar sobrescribir el progreso con 0.
+        if (!_reanudacionAplicada) {
+          if (_objetivoReanudacionMs > 0 &&
+              LogicaReanudacionVideo.estaReanudacionConfirmada(
+                posicionActualMs: posMs,
+                objetivoMs: _objetivoReanudacionMs,
+              )) {
+            _reanudacionAplicada = true;
+            _ultimaPosicionValidaMs = posMs;
+            _videoActual.posicionGuardadaMs = posMs;
+            _videoActual.estaCompletado = false;
+            _ultimoGuardadoTimestamp = DateTime.now().millisecondsSinceEpoch;
+          } else {
+            return;
+          }
+        }
+
+        if (posMs > 0) {
+          _ultimaPosicionValidaMs = posMs;
+        }
+
         final videoCompletado =
             _reproductor.state.completed || _esVideoCompletado(posMs, durMs);
-        if (_reanudacionAplicada) {
-          if (videoCompletado) {
-            _videoActual.estaCompletado = true;
-            _videoActual.posicionGuardadaMs = 0;
-            if (!_progresoFinalizadoLimpiado) {
-              _progresoFinalizadoLimpiado = true;
-              unawaited(
-                ServicioPreferencias.marcarVideoCompletado(
-                  _videoActual.ruta,
-                  duracionTotalMs: durMs,
-                  completado: true,
-                ),
-              );
-            }
-          } else {
-            // Solo desmarca completado si el usuario rebobina antes del 90% intencionalmente
-            if (!_videoActual.estaCompletado ||
-                (durMs > 0 &&
-                    posMs < durMs * 0.90 &&
-                    posMs > 0 &&
-                    !_reproductor.state.completed)) {
-              _videoActual.estaCompletado = false;
-              _videoActual.posicionGuardadaMs = posMs;
-              _progresoFinalizadoLimpiado = false;
-            }
+        if (videoCompletado) {
+          _videoActual.estaCompletado = true;
+          _videoActual.posicionGuardadaMs = 0;
+          if (!_progresoFinalizadoLimpiado) {
+            _progresoFinalizadoLimpiado = true;
+            unawaited(
+              ServicioPreferencias.marcarVideoCompletado(
+                _videoActual.ruta,
+                duracionTotalMs: durMs,
+                completado: true,
+              ),
+            );
           }
+        } else {
+          // Solo desmarca completado si el usuario rebobina antes del 90% intencionalmente
+          if (!_videoActual.estaCompletado ||
+              (durMs > 0 &&
+                  posMs < durMs * 0.90 &&
+                  posMs > 0 &&
+                  !_reproductor.state.completed)) {
+            _videoActual.estaCompletado = false;
+            if (posMs > 0) {
+              _videoActual.posicionGuardadaMs = posMs;
+            }
+            _progresoFinalizadoLimpiado = false;
+          }
+        }
+        if (durMs > 0) {
           _videoActual.duracionTotalMs = durMs;
         }
 
@@ -493,8 +540,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
         // Throttling de disco cada 5s
         final ahora = DateTime.now().millisecondsSinceEpoch;
-        if (_reanudacionAplicada &&
-            ahora - _ultimoGuardadoTimestamp >= 5000 &&
+        if (ahora - _ultimoGuardadoTimestamp >= 5000 &&
             _reproductor.state.playing) {
           _ultimoGuardadoTimestamp = ahora;
           if (videoCompletado || _videoActual.estaCompletado) {
@@ -510,7 +556,8 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                 ),
               );
             }
-          } else if (!_videoActual.estaCompletado && posMs > 5000) {
+          } else if (!_videoActual.estaCompletado &&
+              posMs > LogicaReanudacionVideo.umbralMinimoProgresoMs) {
             unawaited(
               ServicioPreferencias.guardarProgresoVideo(
                 rutaVideo: _videoActual.ruta,
@@ -526,11 +573,17 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     // 2. Escuchar fin de video y estado de reproducción
     _suscripciones.add(
       _reproductor.stream.completed.listen((completado) async {
-        if (!mounted || _estaSaliendo || !completado) return;
+        if (!mounted ||
+            _estaSaliendo ||
+            !completado ||
+            idCargaSuscripcion != _idCargaVideo) {
+          return;
+        }
         if (_velocidadRapida2xActiva.value) {
           _alFinalizarPulsacionLarga();
         }
-        final durMs = _reproductor.state.duration.inMilliseconds;
+        final durMotorMs = _reproductor.state.duration.inMilliseconds;
+        final durMs = durMotorMs > 0 ? durMotorMs : _videoActual.duracionTotalMs;
         _videoActual.estaCompletado = true;
         _videoActual.posicionGuardadaMs = 0;
         _progresoFinalizadoLimpiado = true;
@@ -539,6 +592,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
           duracionTotalMs: durMs,
           completado: true,
         );
+        if (!mounted || _estaSaliendo || idCargaSuscripcion != _idCargaVideo) {
+          return;
+        }
         if (_apagarAlTerminarVideo) {
           _manejarSalida();
           return;
@@ -555,16 +611,25 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
     _suscripciones.add(
       _reproductor.stream.playing.listen((reproduciendo) {
-        if (mounted && !_estaSaliendo) {
-          _actualizarReproduccion(reproduciendo: reproduciendo);
+        if (!mounted || _estaSaliendo || idCargaSuscripcion != _idCargaVideo) {
+          return;
         }
+        _actualizarReproduccion(reproduciendo: reproduciendo);
+        // Al pausar (botón, foco de audio, auriculares), persistir de inmediato.
+        if (_estabaReproduciendoMotor &&
+            !reproduciendo &&
+            _estaInicializado &&
+            _reanudacionAplicada) {
+          unawaited(_guardarProgresoInmediato().catchError((_) {}));
+        }
+        _estabaReproduciendoMotor = reproduciendo;
       }),
     );
 
     // 3. Escuchar buffering
     _suscripciones.add(
       _reproductor.stream.buffering.listen((cargando) {
-        if (mounted && !_estaSaliendo) {
+        if (mounted && !_estaSaliendo && idCargaSuscripcion == _idCargaVideo) {
           _actualizarReproduccion(cargando: cargando);
         }
       }),
@@ -573,7 +638,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     // 4. Escuchar duración
     _suscripciones.add(
       _reproductor.stream.duration.listen((dur) {
-        if (mounted && dur > Duration.zero && !_estaSaliendo) {
+        if (mounted &&
+            dur > Duration.zero &&
+            !_estaSaliendo &&
+            idCargaSuscripcion == _idCargaVideo) {
           ServicioDuracionVideo.registrarDuracionEnMemoria(
             _videoActual,
             dur.inMilliseconds,
@@ -589,10 +657,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       }),
     );
 
-    // 5. Escuchar errores del reproductor con auto-fallback
+    // 5. Escuchar errores del reproductor con auto-fallback preservando posición
     _suscripciones.add(
       _reproductor.stream.error.listen((error) async {
-        if (!mounted || _estaSaliendo) return;
+        if (!mounted || _estaSaliendo || idCargaSuscripcion != _idCargaVideo) {
+          return;
+        }
 
         if (!_reintentadoConSoftware &&
             (error.toLowerCase().contains('codec') ||
@@ -601,11 +671,33 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                 error.toLowerCase().contains('exceeds'))) {
           _reintentadoConSoftware = true;
           try {
+            final posPreservarMs = _ultimaPosicionValidaMs >
+                    LogicaReanudacionVideo.umbralMinimoProgresoMs
+                ? _ultimaPosicionValidaMs
+                : _objetivoReanudacionMs;
             final dynamic platform = _reproductor.platform;
             if (platform != null) {
               await platform.setProperty('hwdec', 'no');
             }
-            await _reproductor.open(Media(_videoActual.ruta), play: true);
+            final mediaFallback = posPreservarMs >
+                    LogicaReanudacionVideo.umbralMinimoProgresoMs
+                ? Media(
+                    _videoActual.ruta,
+                    start: Duration(milliseconds: posPreservarMs),
+                  )
+                : Media(_videoActual.ruta);
+            await _reproductor.open(mediaFallback, play: true);
+            if (posPreservarMs >
+                    LogicaReanudacionVideo.umbralMinimoProgresoMs &&
+                mounted &&
+                !_estaSaliendo &&
+                idCargaSuscripcion == _idCargaVideo) {
+              _reanudacionAplicada = false;
+              _objetivoReanudacionMs = posPreservarMs;
+              unawaited(
+                _verificarReanudacion(posPreservarMs, idCargaSuscripcion),
+              );
+            }
             return;
           } catch (_) {}
         }
@@ -619,15 +711,33 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   }
 
   Future<void> _cargarYReproducirVideo() async {
+    final idCarga = ++_idCargaVideo;
+    _reanudacionAplicada = false;
+    _progresoFinalizadoLimpiado = false;
+    _objetivoReanudacionMs = 0;
+    _ultimaPosicionValidaMs = 0;
+    _usuarioHizoSeekManual = false;
+    _estabaReproduciendoMotor = false;
+
     try {
       final archivo = File(_videoActual.ruta);
       if (!await archivo.exists()) {
+        if (!mounted || idCarga != _idCargaVideo) return;
         setState(() {
           _tieneError = true;
           _mensajeError = 'El archivo de video no existe o no se puede leer.';
         });
         return;
       }
+
+      // Esperar cualquier guardado pendiente antes de leer el progreso real en disco.
+      if (PantallaReproductor.ultimoGuardadoFuture != null) {
+        try {
+          await PantallaReproductor.ultimoGuardadoFuture;
+        } catch (_) {}
+      }
+      await ServicioPreferencias.esperarEscriturasPendientes();
+      if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return;
 
       // Aplicar retardos de subtítulos y audio
       try {
@@ -648,34 +758,79 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         }
       } catch (_) {}
 
-      // Leer el progreso antes de abrir el medio. Así los eventos iniciales en
-      // posición cero no pueden reemplazar el punto que se debe restaurar.
-      final posicionGuardada = _videoActual.posicionGuardadaMs > 5000
-          ? _videoActual.posicionGuardadaMs
+      // Fuente única de verdad: leer primero el estado persistido en SharedPreferences
+      // para evitar reanudar con copias obsoletas en memoria.
+      final estaCompletadoEnDisco = await ServicioPreferencias.esVideoCompletado(
+        _videoActual.ruta,
+      );
+      final posicionDiscoMs = estaCompletadoEnDisco
+          ? 0
           : await ServicioPreferencias.obtenerPosicionGuardada(
               _videoActual.ruta,
             );
+      final duracionDiscoMs = await ServicioPreferencias.obtenerDuracionGuardada(
+        _videoActual.ruta,
+      );
+      if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return;
+
+      _videoActual.estaCompletado = estaCompletadoEnDisco;
+      if (duracionDiscoMs > 0 && _videoActual.duracionTotalMs <= 0) {
+        _videoActual.duracionTotalMs = duracionDiscoMs;
+      }
+      final duracionConocidaMs = duracionDiscoMs > 0
+          ? duracionDiscoMs
+          : _videoActual.duracionTotalMs;
+
+      final objetivoInicialMs =
+          LogicaReanudacionVideo.calcularObjetivoReanudacionMs(
+            posicionDiscoMs: posicionDiscoMs,
+            posicionMemoriaMs: _videoActual.posicionGuardadaMs,
+            completadoEnDisco: estaCompletadoEnDisco,
+            duracionConocidaMs: duracionConocidaMs,
+          );
+      _objetivoReanudacionMs = objetivoInicialMs;
+
+      if (objetivoInicialMs > 0) {
+        _videoActual.posicionGuardadaMs = objetivoInicialMs;
+        _actualizarProgreso(
+          posicionMs: objetivoInicialMs,
+          duracionMs: duracionConocidaMs,
+        );
+      }
 
       // Configurar suscripciones reactivas del motor
       _configurarSuscripcionesMotor();
 
-      // Abrir pausado, esperar sus metadatos y restaurar antes de reproducir.
-      await _reproductor.open(Media(_videoActual.ruta), play: false);
+      // Abrir usando `Media.start` nativo de libmpv (hook on_load) para posicionar
+      // el demuxer directamente en el minuto guardado sin carreras al iniciar.
+      final media = objetivoInicialMs > 0
+          ? Media(
+              _videoActual.ruta,
+              start: Duration(milliseconds: objetivoInicialMs),
+            )
+          : Media(_videoActual.ruta);
+
+      await _reproductor.open(media, play: false);
+      if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return;
+
       unawaited(_cargarCapitulosDesdeMetadatos());
 
       // Cargar subtítulos locales automáticamente si existen
       unawaited(_buscarYCargarSubtitulosLocales());
 
       final objetivoReanudacionMs = await _aplicarReanudacionInicial(
-        posicionGuardada,
+        objetivoInicialMs,
+        idCarga,
       );
+      if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return;
 
+      _objetivoReanudacionMs = objetivoReanudacionMs;
       // Evita que el primer evento del motor escriba 0 sobre el progreso.
       _ultimoGuardadoTimestamp = DateTime.now().millisecondsSinceEpoch;
       _reanudacionAplicada = objetivoReanudacionMs == 0;
       await _reproductor.play();
 
-      if (!mounted) return;
+      if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return;
       _sincronizarEstadoInterfaz();
 
       // Registrar sesión en GestorPipGlobal para persistencia en miniplayer
@@ -696,11 +851,11 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       );
 
       if (objetivoReanudacionMs > 0) {
-        unawaited(_verificarReanudacion(objetivoReanudacionMs));
+        unawaited(_verificarReanudacion(objetivoReanudacionMs, idCarga));
       }
       _reiniciarTemporizadorOcultarControles();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || idCarga != _idCargaVideo) return;
       setState(() {
         _tieneError = true;
         _mensajeError = 'Error al decodificar el video: $e';
@@ -708,43 +863,115 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     }
   }
 
-  Future<int> _aplicarReanudacionInicial(int posicionGuardadaMs) async {
-    if (posicionGuardadaMs <= 5000) return 0;
+  Future<int> _aplicarReanudacionInicial(
+    int posicionGuardadaMs,
+    int idCarga,
+  ) async {
+    if (posicionGuardadaMs <= LogicaReanudacionVideo.umbralMinimoProgresoMs) {
+      return 0;
+    }
 
     var duracion = _reproductor.state.duration;
     if (duracion <= Duration.zero) {
       duracion = await _reproductor.stream.duration
           .firstWhere((valor) => valor > Duration.zero)
           .timeout(
-            const Duration(milliseconds: 900),
+            const Duration(milliseconds: 1500),
             onTimeout: () => Duration.zero,
           );
     }
+    if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return 0;
 
-    var objetivoMs = posicionGuardadaMs;
-    final duracionMs = duracion.inMilliseconds;
-    if (duracionMs > 1000 && objetivoMs >= duracionMs) {
-      objetivoMs = duracionMs - 1000;
+    final duracionRealMs = duracion.inMilliseconds;
+    final objetivoMs = LogicaReanudacionVideo.ajustarObjetivoADuracionReal(
+      objetivoMs: posicionGuardadaMs,
+      duracionRealMs: duracionRealMs,
+    );
+    if (objetivoMs <= LogicaReanudacionVideo.umbralMinimoProgresoMs) {
+      return 0;
     }
 
-    await _reproductor.seek(Duration(milliseconds: objetivoMs));
+    final posicionActualMs = _reproductor.state.position.inMilliseconds;
+    if (!LogicaReanudacionVideo.estaReanudacionConfirmada(
+      posicionActualMs: posicionActualMs,
+      objetivoMs: objetivoMs,
+    )) {
+      await _reproductor.seek(Duration(milliseconds: objetivoMs));
+    }
     return objetivoMs;
   }
 
-  /// Algunos decodificadores aceptan el primer seek antes de preparar el
-  /// video pero no lo aplican. Se verifica una vez iniciada la reproducción.
-  Future<void> _verificarReanudacion(int objetivoMs) async {
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    if (!mounted || _estaSaliendo || !_reproductorCreado) return;
+  /// Verifica en varios intentos tras iniciar la reproducción que el motor haya
+  /// aterrizado en el punto guardado (cubre decodificadores hardware lentos o
+  /// contenedores MKV/MP4 que ignoran el primer seek antes de adjuntar el Surface).
+  Future<void> _verificarReanudacion(int objetivoMs, int idCarga) async {
+    const intervalosMs = [150, 200, 250, 350, 450, 550, 700];
+    var objetivoActual = objetivoMs;
 
-    final posicionActualMs = _reproductor.state.position.inMilliseconds;
-    if (posicionActualMs + 2000 < objetivoMs) {
-      await _reproductor.seek(Duration(milliseconds: objetivoMs));
+    for (var i = 0; i < intervalosMs.length; i++) {
+      await Future<void>.delayed(Duration(milliseconds: intervalosMs[i]));
+      if (!mounted ||
+          _estaSaliendo ||
+          !_reproductorCreado ||
+          idCarga != _idCargaVideo ||
+          _usuarioHizoSeekManual ||
+          _reanudacionAplicada) {
+        return;
+      }
+
+      final durMs = _reproductor.state.duration.inMilliseconds;
+      if (durMs > 0) {
+        objetivoActual = LogicaReanudacionVideo.ajustarObjetivoADuracionReal(
+          objetivoMs: objetivoMs,
+          duracionRealMs: durMs,
+        );
+        if (objetivoActual <= LogicaReanudacionVideo.umbralMinimoProgresoMs) {
+          _reanudacionAplicada = true;
+          return;
+        }
+      }
+
+      final posicionActualMs = _reproductor.state.position.inMilliseconds;
+      if (LogicaReanudacionVideo.estaReanudacionConfirmada(
+        posicionActualMs: posicionActualMs,
+        objetivoMs: objetivoActual,
+      )) {
+        _reanudacionAplicada = true;
+        _ultimaPosicionValidaMs = posicionActualMs;
+        _videoActual.posicionGuardadaMs = posicionActualMs;
+        _videoActual.estaCompletado = false;
+        _ultimoGuardadoTimestamp = DateTime.now().millisecondsSinceEpoch;
+        _sincronizarEstadoInterfaz();
+        return;
+      }
+
+      // Reintentar seek cuando la duración ya está lista o tras el primer intento
+      if (durMs > 0 || i >= 1) {
+        try {
+          await _reproductor.seek(Duration(milliseconds: objetivoActual));
+        } catch (_) {}
+      }
     }
 
-    if (!mounted || _estaSaliendo) return;
+    if (!mounted ||
+        _estaSaliendo ||
+        idCarga != _idCargaVideo ||
+        _usuarioHizoSeekManual) {
+      return;
+    }
+
+    final posicionFinalMs = _reproductor.state.position.inMilliseconds;
     _reanudacionAplicada = true;
-    _videoActual.posicionGuardadaMs = objetivoMs;
+    if (LogicaReanudacionVideo.estaReanudacionConfirmada(
+      posicionActualMs: posicionFinalMs,
+      objetivoMs: objetivoActual,
+    )) {
+      _ultimaPosicionValidaMs = posicionFinalMs;
+      _videoActual.posicionGuardadaMs = posicionFinalMs;
+    } else {
+      _ultimaPosicionValidaMs = objetivoActual;
+      _videoActual.posicionGuardadaMs = objetivoActual;
+    }
     _ultimoGuardadoTimestamp = DateTime.now().millisecondsSinceEpoch;
     _sincronizarEstadoInterfaz();
   }
@@ -759,15 +986,16 @@ class _PantallaReproductorState extends State<PantallaReproductor>
 
       case AppLifecycleState.inactive:
         // IMPORTANTE: Al bajar la barra de notificaciones, abrir ajustes rápidos,
-        // panel de volumen o iniciar gestos del sistema, Android emite 'inactive'.
-        // NUNCA pausar el video aquí para permitir reproducción ininterrumpida
-        // y permitir que el sistema transicione a PiP sin cortar el flujo.
+        // panel de volumen o cambiar de app (Recents), Android emite 'inactive'.
+        // NUNCA pausar el video aquí, pero sí respaldar el progreso inmediatamente
+        // para no perderlo si el sistema mata o cambia de app de golpe.
+        unawaited(_guardarProgresoInmediato().catchError((_) {}));
         break;
 
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
         _alFinalizarPulsacionLarga();
-        _guardarProgresoInmediato();
+        unawaited(_guardarProgresoInmediato().catchError((_) {}));
         // Si no está en PiP, dar una ventana de gracia para permitir la transición a PiP del sistema.
         // Si tras la ventana de gracia sigue en segundo plano y NO está en PiP (ej: pantalla bloqueada),
         // pausar para ahorrar batería y detener el audio.
@@ -779,6 +1007,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             if (!ServicioPipNativo.estaEnPip &&
                 _estaInicializado &&
                 _reproductor.state.playing) {
+              unawaited(_guardarProgresoInmediato().catchError((_) {}));
               _reproductor.pause();
             }
           });
@@ -786,67 +1015,95 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         break;
 
       case AppLifecycleState.detached:
-        _guardarProgresoInmediato();
+        unawaited(_guardarProgresoInmediato().catchError((_) {}));
         break;
     }
   }
 
   bool _esVideoCompletado(int posicionMs, int duracionMs) {
-    if (duracionMs <= 0) return false;
-    return posicionMs >= (duracionMs * 0.95) ||
-        (duracionMs - posicionMs <= 4000);
+    return LogicaReanudacionVideo.esVideoCompletado(
+      posicionMs: posicionMs,
+      duracionMs: duracionMs,
+    );
   }
 
-  Future<void> _guardarProgresoInmediato() async {
-    if (!_estaInicializado || !_reanudacionAplicada) return;
+  Future<void> _guardarProgresoInmediato({int? posicionForzadaMs}) {
+    if (!_estaInicializado || !_reproductorCreado) {
+      return Future<void>.value();
+    }
+    if (!_reanudacionAplicada && posicionForzadaMs == null) {
+      // Proteger contra sobreescribir con 0 mientras aún no ha aterrizado la reanudación.
+      return Future<void>.value();
+    }
 
-    final posMs = _reproductor.state.position.inMilliseconds;
-    final durMs = _reproductor.state.duration.inMilliseconds;
-    final esCompletado = _videoActual.estaCompletado ||
-        _reproductor.state.completed ||
-        _esVideoCompletado(posMs, durMs);
+    // Capturar toda la lectura de estado de forma SINCRÓNICA antes de cualquier await.
+    final ruta = _videoActual.ruta;
+    final posMs = LogicaReanudacionVideo.resolverPosicionParaGuardar(
+      posicionMotorMs: _reproductor.state.position.inMilliseconds,
+      ultimaPosicionValidaMs: _ultimaPosicionValidaMs,
+      posicionForzadaMs: posicionForzadaMs,
+    );
+    final durMotorMs = _reproductor.state.duration.inMilliseconds;
+    final durMs = durMotorMs > 0 ? durMotorMs : _videoActual.duracionTotalMs;
+    final esCompletado = posicionForzadaMs == null &&
+        (_videoActual.estaCompletado ||
+            _reproductor.state.completed ||
+            _esVideoCompletado(posMs, durMs));
 
     if (esCompletado) {
       _videoActual.posicionGuardadaMs = 0;
       _videoActual.estaCompletado = true;
+      if (durMs > 0) _videoActual.duracionTotalMs = durMs;
       _progresoFinalizadoLimpiado = true;
-      await ServicioPreferencias.marcarVideoCompletado(
-        _videoActual.ruta,
+      return ServicioPreferencias.marcarVideoCompletado(
+        ruta,
         duracionTotalMs: durMs,
         completado: true,
       );
-      return;
     }
 
-    if (posMs > 5000) {
+    if (posMs > LogicaReanudacionVideo.umbralMinimoProgresoMs) {
+      _ultimaPosicionValidaMs = posMs;
       _videoActual.posicionGuardadaMs = posMs;
-      _videoActual.duracionTotalMs = durMs;
+      if (durMs > 0) _videoActual.duracionTotalMs = durMs;
       _videoActual.estaCompletado = false;
-      await ServicioPreferencias.guardarProgresoVideo(
-        rutaVideo: _videoActual.ruta,
+      _progresoFinalizadoLimpiado = false;
+      return ServicioPreferencias.guardarProgresoVideo(
+        rutaVideo: ruta,
         posicionMs: posMs,
         duracionTotalMs: durMs,
       );
-    } else if (durMs > 0) {
-      _videoActual.duracionTotalMs = durMs;
-      await ServicioPreferencias.guardarDuracionVideo(_videoActual.ruta, durMs);
     }
+
+    if (durMs > 0) {
+      _videoActual.duracionTotalMs = durMs;
+      return ServicioPreferencias.guardarDuracionVideo(ruta, durMs);
+    }
+
+    return Future<void>.value();
   }
 
   /// Regresa inmediatamente y deja que la biblioteca absorba la rotación.
   void _manejarSalida() {
     if (_estaSaliendo) return;
     _estaSaliendo = true;
+    _idCargaVideo++;
     _cancelarCuentaRegresivaAutoplay();
     _controladorVistaPrevia.liberarRecursos();
 
-    // Cerrar sesión en PiP si el usuario cerró el reproductor completamente (sin sobreescribir progreso)
-    unawaited(GestorPipGlobal.instancia.cerrar(guardarProgreso: false));
-
-    // La posición y duración se capturan antes del primer await del guardado.
+    // IMPORTANTE: Capturar y persistir la posición ANTES de limpiar la sesión PiP
+    // o disponer el reproductor, evitando leer posición 0 de un motor ya liberado.
     if (_estaInicializado) {
       PantallaReproductor.ultimoGuardadoFuture = _guardarProgresoInmediato();
     }
+
+    // Limpiar la sesión global de PiP SIN disponer el motor (lo liberará dispose()).
+    unawaited(
+      GestorPipGlobal.instancia.cerrar(
+        guardarProgreso: false,
+        disponerReproductor: false,
+      ),
+    );
 
     try {
       unawaited(ScreenBrightness.instance.resetApplicationScreenBrightness());
@@ -876,6 +1133,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     }
 
     _estaSaliendo = true;
+    _idCargaVideo++;
     _cancelarCuentaRegresivaAutoplay();
     _controladorVistaPrevia.liberarRecursos();
     PantallaReproductor.ultimoGuardadoFuture = _guardarProgresoInmediato();
@@ -946,11 +1204,43 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   /// Alterna play y pause.
   void _alternarPlayPause() {
     if (!_estaInicializado || _estaSaliendo) return;
-    _reproductor.playOrPause();
-    if (!_reproductor.state.playing) {
-      _guardarProgresoInmediato();
+    final estabaReproduciendo = _reproductor.state.playing;
+    final estabaCompletado = _reproductor.state.completed;
+
+    if (estabaCompletado) {
+      // Reabrir sin `start` para que repetir un video completado inicie siempre desde 00:00.
+      _usuarioHizoSeekManual = true;
+      _reanudacionAplicada = true;
+      _objetivoReanudacionMs = 0;
+      _ultimaPosicionValidaMs = 0;
+      _progresoFinalizadoLimpiado = false;
+      _videoActual.estaCompletado = false;
+      _videoActual.posicionGuardadaMs = 0;
+      unawaited(
+        _reproductor.open(Media(_videoActual.ruta), play: true).catchError((_) {}),
+      );
+      _reiniciarTemporizadorOcultarControles();
+      return;
     }
+
+    if (estabaReproduciendo) {
+      unawaited(_guardarProgresoInmediato().catchError((_) {}));
+    }
+    unawaited(_reproductor.playOrPause().catchError((_) {}));
     _reiniciarTemporizadorOcultarControles();
+  }
+
+  void _registrarSeekManualYGuardar(int destinoMs) {
+    _usuarioHizoSeekManual = true;
+    _reanudacionAplicada = true;
+    _ultimaPosicionValidaMs = destinoMs;
+    _ultimoGuardadoTimestamp = DateTime.now().millisecondsSinceEpoch;
+    if (destinoMs > LogicaReanudacionVideo.umbralMinimoProgresoMs) {
+      unawaited(
+        _guardarProgresoInmediato(posicionForzadaMs: destinoMs)
+            .catchError((_) {}),
+      );
+    }
   }
 
   /// Salto rápido de +10 segundos con animación visual.
@@ -960,6 +1250,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     final limite = _reproductor.state.duration;
     final destino = nuevaPos > limite ? limite : nuevaPos;
     await _reproductor.seek(destino);
+    _registrarSeekManualYGuardar(destino.inMilliseconds);
     _mostrarOSDSeek(10, destino.inMilliseconds);
     _reiniciarTemporizadorOcultarControles();
   }
@@ -970,6 +1261,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     final nuevaPos = _reproductor.state.position - const Duration(seconds: 10);
     final destino = nuevaPos < Duration.zero ? Duration.zero : nuevaPos;
     await _reproductor.seek(destino);
+    _registrarSeekManualYGuardar(destino.inMilliseconds);
     _mostrarOSDSeek(-10, destino.inMilliseconds);
     _reiniciarTemporizadorOcultarControles();
   }
@@ -1017,6 +1309,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       duracionMs: duracionMs,
     );
     await _reproductor.seek(Duration(milliseconds: objetivoMs));
+    _registrarSeekManualYGuardar(objetivoMs);
     _reiniciarTemporizadorOcultarControles();
   }
 
@@ -1302,6 +1595,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     try {
       await _reproductor.seek(Duration(milliseconds: destinoMs));
       if (!mounted || _estaSaliendo) return;
+      _registrarSeekManualYGuardar(destinoMs);
       _actualizarProgreso(posicionMs: destinoMs);
       _reiniciarTemporizadorOcultarControles();
     } catch (_) {}
@@ -1333,6 +1627,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     try {
       await _reproductor.seek(Duration(milliseconds: capitulo.inicioMs));
       if (!mounted || _estaSaliendo) return;
+      _registrarSeekManualYGuardar(capitulo.inicioMs);
       _actualizarProgreso(posicionMs: capitulo.inicioMs);
       _actualizarCapituloSaltar(
         capitulo.inicioMs,
@@ -1794,11 +2089,24 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       listaVideos: _playlist,
       indiceActual: _indiceActual,
       reproduccionAutomatica: _reproduccionAutomatica,
+      criterioOrden: ServicioPreferencias.criterioOrdenNotifier.value,
       alSeleccionarVideo: (video, _) {
         _cambiarDeVideo(video);
       },
       alAlternarReproduccionAutomatica: _alternarReproduccionAutomatica,
+      alCambiarCriterioOrden: _cambiarOrdenPlaylist,
     );
+  }
+
+  void _cambiarOrdenPlaylist(CriterioOrdenVideos nuevoCriterio) {
+    OrdenadorVideos.ordenarVideos(_playlist, nuevoCriterio);
+    final nuevoIndice = _playlist.indexWhere((v) => v.ruta == _videoActual.ruta);
+    setState(() {
+      _indiceActual = nuevoIndice >= 0 ? nuevoIndice : 0;
+    });
+    GestorPipGlobal.instancia.playlist = _playlist;
+    GestorPipGlobal.instancia.actualizarVideoActual(_videoActual, _indiceActual);
+    unawaited(ServicioPreferencias.guardarCriterioOrdenVideos(nuevoCriterio));
   }
 
   void _iniciarCuentaRegresivaAutoplay() {
@@ -1874,6 +2182,15 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     if (_estaSaliendo) return;
     _cancelarCuentaRegresivaAutoplay();
     await _guardarProgresoInmediato();
+    if (!mounted || _estaSaliendo) return;
+
+    _idCargaVideo++;
+    _reanudacionAplicada = false;
+    _progresoFinalizadoLimpiado = false;
+    _objetivoReanudacionMs = 0;
+    _ultimaPosicionValidaMs = 0;
+    _usuarioHizoSeekManual = false;
+    _estabaReproduciendoMotor = false;
 
     final nuevoIndice = _playlist.indexWhere((v) => v.ruta == nuevoVideo.ruta);
     _restablecerZoom(animado: false);
@@ -2273,6 +2590,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     if (_modoGestoActivo == _ModoGestoTactil.seek) {
       _arrastrandoScrubber = false;
       await _reproductor.seek(Duration(milliseconds: _posicionSeekArrastreMs));
+      _registrarSeekManualYGuardar(_posicionSeekArrastreMs);
       _reiniciarTemporizadorOcultarControles();
     }
 

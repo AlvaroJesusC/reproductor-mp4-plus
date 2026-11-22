@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../modelos/modelo_orden_videos.dart';
 import '../modelos/modelo_video.dart';
 
 /// Servicio optimizado de almacenamiento local de preferencias y progreso de reproducción con caché de instancia.
@@ -14,9 +15,61 @@ class ServicioPreferencias {
   // Caché de la instancia de SharedPreferences para evitar llamadas repetidas a disco
   static SharedPreferences? _instanciaPrefs;
 
+  // Cola secuencial de escrituras de progreso para evitar carreras lectura/escritura.
+  static Future<void>? _ultimaEscrituraProgreso;
+
+  /// Notificador reactivo de cambios en el progreso/completado de videos.
+  static final ValueNotifier<int> versionProgreso = ValueNotifier<int>(0);
+
+  /// Notifica a la interfaz que el progreso de algún video fue actualizado.
+  static void notificarCambioProgreso() {
+    versionProgreso.value++;
+  }
+
+  /// Espera a que terminen todas las escrituras de progreso/completado en curso.
+  static Future<void> esperarEscriturasPendientes() async {
+    final pendiente = _ultimaEscrituraProgreso;
+    if (pendiente == null) return;
+    try {
+      await pendiente;
+    } catch (_) {}
+  }
+
+  static Future<T> _encolarEscrituraProgreso<T>(
+    Future<T> Function() operacion,
+  ) {
+    final previa = _ultimaEscrituraProgreso;
+    final siguiente = previa == null
+        ? operacion()
+        : previa.catchError((_) {}).then((_) => operacion());
+    late final Future<void> marcador;
+    marcador = siguiente.then((_) {}, onError: (_) {}).whenComplete(() {
+      if (identical(_ultimaEscrituraProgreso, marcador)) {
+        _ultimaEscrituraProgreso = null;
+      }
+    });
+    _ultimaEscrituraProgreso = marcador;
+    return siguiente;
+  }
+
+  static Set<String> _leerCompletadosDesdePrefs(SharedPreferences prefs) {
+    final jsonStr = prefs.getString(_prefClaveCompletados);
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final dec = jsonDecode(jsonStr);
+        if (dec is List) {
+          return dec.map((e) => e.toString()).toSet();
+        }
+      } catch (_) {}
+    }
+    return <String>{};
+  }
+
   @visibleForTesting
   static void reiniciarInstanciaParaPruebas() {
     _instanciaPrefs = null;
+    _ultimaEscrituraProgreso = null;
+    criterioOrdenNotifier.value = CriterioOrdenVideos.nombreAsc;
   }
 
   static Future<SharedPreferences> _obtenerInstancia() async {
@@ -29,35 +82,48 @@ class ServicioPreferencias {
     required String rutaVideo,
     required int posicionMs,
     required int duracionTotalMs,
-  }) async {
-    final prefs = await _obtenerInstancia();
-    final completados = await obtenerCompletados();
-    if (completados.contains(rutaVideo)) {
-      completados.remove(rutaVideo);
-      await prefs.setString(
-        _prefClaveCompletados,
-        jsonEncode(completados.toList()),
-      );
-    }
+  }) {
+    return _encolarEscrituraProgreso(() async {
+      final prefs = await _obtenerInstancia();
+      final completados = _leerCompletadosDesdePrefs(prefs);
+      if (completados.contains(rutaVideo)) {
+        completados.remove(rutaVideo);
+        await prefs.setString(
+          _prefClaveCompletados,
+          jsonEncode(completados.toList()),
+        );
+      }
 
-    await Future.wait([
-      prefs.setInt('pos_$rutaVideo', posicionMs),
-      prefs.setInt('dur_$rutaVideo', duracionTotalMs),
-      prefs.setInt('fecha_$rutaVideo', DateTime.now().millisecondsSinceEpoch),
-    ]);
+      final operaciones = <Future<bool>>[
+        prefs.setInt('pos_$rutaVideo', posicionMs),
+        prefs.setInt('fecha_$rutaVideo', DateTime.now().millisecondsSinceEpoch),
+      ];
+      // Nunca sobreescribir una duración válida conocida con 0.
+      if (duracionTotalMs > 0) {
+        operaciones.add(prefs.setInt('dur_$rutaVideo', duracionTotalMs));
+      }
+      await Future.wait(operaciones);
 
-    // Esperar el historial evita que la pantalla de recientes lea datos antiguos.
-    await _agregarAlHistorial(rutaVideo, prefs);
+      // Esperar el historial evita que la pantalla de recientes lea datos antiguos.
+      await _agregarAlHistorial(rutaVideo, prefs);
+      notificarCambioProgreso();
+    });
   }
 
   /// Obtiene la posición guardada de un video en milisegundos (0 si no existe).
   static Future<int> obtenerPosicionGuardada(String rutaVideo) async {
+    if (_ultimaEscrituraProgreso != null) {
+      await esperarEscriturasPendientes();
+    }
     final prefs = await _obtenerInstancia();
     return prefs.getInt('pos_$rutaVideo') ?? 0;
   }
 
   /// Obtiene la duración guardada de un video en milisegundos.
   static Future<int> obtenerDuracionGuardada(String rutaVideo) async {
+    if (_ultimaEscrituraProgreso != null) {
+      await esperarEscriturasPendientes();
+    }
     final prefs = await _obtenerInstancia();
     return prefs.getInt('dur_$rutaVideo') ?? 0;
   }
@@ -86,20 +152,23 @@ class ServicioPreferencias {
   }
 
   /// Borra el progreso guardado de un video específico sin perder su duración conocida.
-  static Future<void> borrarProgresoVideo(String rutaVideo) async {
-    final prefs = await _obtenerInstancia();
-    final completados = await obtenerCompletados();
-    if (completados.contains(rutaVideo)) {
-      completados.remove(rutaVideo);
-      await prefs.setString(
-        _prefClaveCompletados,
-        jsonEncode(completados.toList()),
-      );
-    }
-    await Future.wait([
-      prefs.remove('pos_$rutaVideo'),
-      prefs.remove('fecha_$rutaVideo'),
-    ]);
+  static Future<void> borrarProgresoVideo(String rutaVideo) {
+    return _encolarEscrituraProgreso(() async {
+      final prefs = await _obtenerInstancia();
+      final completados = _leerCompletadosDesdePrefs(prefs);
+      if (completados.contains(rutaVideo)) {
+        completados.remove(rutaVideo);
+        await prefs.setString(
+          _prefClaveCompletados,
+          jsonEncode(completados.toList()),
+        );
+      }
+      await Future.wait([
+        prefs.remove('pos_$rutaVideo'),
+        prefs.remove('fecha_$rutaVideo'),
+      ]);
+      notificarCambioProgreso();
+    });
   }
 
   /// Agrega una ruta de video a la lista de videos recientes.
@@ -130,6 +199,9 @@ class ServicioPreferencias {
 
   /// Obtiene la lista de rutas de videos en el historial de recientes.
   static Future<List<String>> obtenerHistorialRutas() async {
+    if (_ultimaEscrituraProgreso != null) {
+      await esperarEscriturasPendientes();
+    }
     final prefs = await _obtenerInstancia();
     final jsonStr = prefs.getString(_prefClaveHistorial);
     if (jsonStr != null && jsonStr.isNotEmpty) {
@@ -148,8 +220,11 @@ class ServicioPreferencias {
     List<ModeloVideo> videos,
   ) async {
     if (videos.isEmpty) return;
+    if (_ultimaEscrituraProgreso != null) {
+      await esperarEscriturasPendientes();
+    }
     final prefs = await _obtenerInstancia();
-    final completados = await obtenerCompletados();
+    final completados = _leerCompletadosDesdePrefs(prefs);
     final favoritos = await obtenerFavoritos();
 
     for (final video in videos) {
@@ -253,17 +328,11 @@ class ServicioPreferencias {
 
   /// Obtiene el conjunto de rutas de videos completados (vistos en su totalidad).
   static Future<Set<String>> obtenerCompletados() async {
-    final prefs = await _obtenerInstancia();
-    final jsonStr = prefs.getString(_prefClaveCompletados);
-    if (jsonStr != null && jsonStr.isNotEmpty) {
-      try {
-        final dec = jsonDecode(jsonStr);
-        if (dec is List) {
-          return dec.map((e) => e.toString()).toSet();
-        }
-      } catch (_) {}
+    if (_ultimaEscrituraProgreso != null) {
+      await esperarEscriturasPendientes();
     }
-    return <String>{};
+    final prefs = await _obtenerInstancia();
+    return _leerCompletadosDesdePrefs(prefs);
   }
 
   /// Marca un video como completado (o no completado) y limpia su posición guardada.
@@ -271,23 +340,26 @@ class ServicioPreferencias {
     String rutaVideo, {
     int? duracionTotalMs,
     bool completado = true,
-  }) async {
-    final prefs = await _obtenerInstancia();
-    final completados = await obtenerCompletados();
-    if (completado) {
-      completados.add(rutaVideo);
-      await prefs.remove('pos_$rutaVideo');
-      if (duracionTotalMs != null && duracionTotalMs > 0) {
-        await prefs.setInt('dur_$rutaVideo', duracionTotalMs);
+  }) {
+    return _encolarEscrituraProgreso(() async {
+      final prefs = await _obtenerInstancia();
+      final completados = _leerCompletadosDesdePrefs(prefs);
+      if (completado) {
+        completados.add(rutaVideo);
+        await prefs.remove('pos_$rutaVideo');
+        if (duracionTotalMs != null && duracionTotalMs > 0) {
+          await prefs.setInt('dur_$rutaVideo', duracionTotalMs);
+        }
+      } else {
+        completados.remove(rutaVideo);
+        await prefs.remove('pos_$rutaVideo');
       }
-    } else {
-      completados.remove(rutaVideo);
-      await prefs.remove('pos_$rutaVideo');
-    }
-    await prefs.setString(
-      _prefClaveCompletados,
-      jsonEncode(completados.toList()),
-    );
+      await prefs.setString(
+        _prefClaveCompletados,
+        jsonEncode(completados.toList()),
+      );
+      notificarCambioProgreso();
+    });
   }
 
   /// Verifica si un video ha sido completado.
@@ -327,13 +399,16 @@ class ServicioPreferencias {
   /// Obtiene de forma instantánea la biblioteca guardada previamente.
   static Future<List<ModeloVideo>> obtenerCacheBiblioteca() async {
     try {
+      if (_ultimaEscrituraProgreso != null) {
+        await esperarEscriturasPendientes();
+      }
       final prefs = await _obtenerInstancia();
       final jsonStr = prefs.getString(_prefClaveCacheBiblioteca);
       if (jsonStr != null && jsonStr.isNotEmpty) {
         final dec = jsonDecode(jsonStr);
         if (dec is List) {
           final favoritos = await obtenerFavoritos();
-          final completados = await obtenerCompletados();
+          final completados = _leerCompletadosDesdePrefs(prefs);
           return dec.map((item) {
             final mapa = Map<String, dynamic>.from(item as Map);
             final video = ModeloVideo.desdeMapa(mapa);
@@ -342,8 +417,7 @@ class ServicioPreferencias {
             if (video.estaCompletado) {
               video.posicionGuardadaMs = 0;
             } else {
-              video.posicionGuardadaMs =
-                  prefs.getInt('pos_${video.ruta}') ?? video.posicionGuardadaMs;
+              video.posicionGuardadaMs = prefs.getInt('pos_${video.ruta}') ?? 0;
             }
             final dur = prefs.getInt('dur_${video.ruta}');
             if (dur != null && dur > 0) {
@@ -411,5 +485,35 @@ class ServicioPreferencias {
   static Future<bool> obtenerReproduccionAutomatica() async {
     final prefs = await _obtenerInstancia();
     return prefs.getBool(_prefClaveReproduccionAutomatica) ?? true;
+  }
+
+  // ===================== ORDEN PREDETERMINADO DE VIDEOS =====================
+  static const String _prefClaveCriterioOrden = 'criterio_orden_videos_v1';
+
+  /// Notificador reactivo del criterio de ordenación activo para mantener
+  /// sincronizadas todas las pestañas y el reproductor en tiempo real.
+  static final ValueNotifier<CriterioOrdenVideos> criterioOrdenNotifier =
+      ValueNotifier<CriterioOrdenVideos>(CriterioOrdenVideos.nombreAsc);
+
+  /// Guarda el criterio de ordenación predeterminado y notifica a las vistas.
+  static Future<void> guardarCriterioOrdenVideos(
+    CriterioOrdenVideos criterio,
+  ) async {
+    criterioOrdenNotifier.value = criterio;
+    final prefs = await _obtenerInstancia();
+    await prefs.setString(_prefClaveCriterioOrden, criterio.clave);
+  }
+
+  /// Obtiene el criterio de ordenación predeterminado (por defecto orden
+  /// natural A-Z: E1, E2, E10...).
+  static Future<CriterioOrdenVideos> obtenerCriterioOrdenVideos() async {
+    final prefs = await _obtenerInstancia();
+    final criterio = CriterioOrdenVideos.desdeClave(
+      prefs.getString(_prefClaveCriterioOrden),
+    );
+    if (criterioOrdenNotifier.value != criterio) {
+      criterioOrdenNotifier.value = criterio;
+    }
+    return criterio;
   }
 }

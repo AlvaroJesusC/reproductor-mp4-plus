@@ -4,11 +4,13 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import '../../constantes/colores_app.dart';
+import '../../modelos/modelo_orden_videos.dart';
 import '../../modelos/modelo_video.dart';
 import '../../servicios/servicio_almacenamiento_video.dart';
 import '../../servicios/servicio_duracion_video.dart';
 import '../../servicios/servicio_miniaturas_video.dart';
 import '../../servicios/servicio_preferencias.dart';
+import '../modal_orden_videos.dart';
 
 /// Panel lateral izquierdo cinemático que muestra la lista de reproducción con
 /// miniaturas 16:9, duración, progreso en tiempo real y animación fluida de
@@ -17,16 +19,20 @@ class HojaPlaylistReproductor extends StatefulWidget {
   final List<ModeloVideo> listaVideos;
   final int indiceActual;
   final bool reproduccionAutomatica;
+  final CriterioOrdenVideos? criterioOrden;
   final void Function(ModeloVideo video, int nuevoIndice) alSeleccionarVideo;
   final ValueChanged<bool>? alAlternarReproduccionAutomatica;
+  final ValueChanged<CriterioOrdenVideos>? alCambiarCriterioOrden;
 
   const HojaPlaylistReproductor({
     super.key,
     required this.listaVideos,
     required this.indiceActual,
     this.reproduccionAutomatica = true,
+    this.criterioOrden,
     required this.alSeleccionarVideo,
     this.alAlternarReproduccionAutomatica,
+    this.alCambiarCriterioOrden,
   });
 
   /// Despliega la lista de reproducción desde el lateral izquierdo con
@@ -36,9 +42,11 @@ class HojaPlaylistReproductor extends StatefulWidget {
     required List<ModeloVideo> listaVideos,
     required int indiceActual,
     bool reproduccionAutomatica = true,
+    CriterioOrdenVideos? criterioOrden,
     required void Function(ModeloVideo video, int nuevoIndice)
     alSeleccionarVideo,
     ValueChanged<bool>? alAlternarReproduccionAutomatica,
+    ValueChanged<CriterioOrdenVideos>? alCambiarCriterioOrden,
   }) {
     final reducirMovimiento = MediaQuery.disableAnimationsOf(context);
     return Navigator.of(context, rootNavigator: true).push<void>(
@@ -62,9 +70,11 @@ class HojaPlaylistReproductor extends StatefulWidget {
                 listaVideos: listaVideos,
                 indiceActual: indiceActual,
                 reproduccionAutomatica: reproduccionAutomatica,
+                criterioOrden: criterioOrden,
                 alSeleccionarVideo: alSeleccionarVideo,
                 alAlternarReproduccionAutomatica:
                     alAlternarReproduccionAutomatica,
+                alCambiarCriterioOrden: alCambiarCriterioOrden,
               ),
             ),
           );
@@ -107,6 +117,9 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
 
   final TextEditingController _controladorFiltro = TextEditingController();
   late final ScrollController _controladorScroll;
+  late List<ModeloVideo> _listaVideos;
+  late int _indiceActual;
+  late CriterioOrdenVideos _criterioOrden;
   String _filtroTexto = '';
   late bool _reproduccionAutomatica;
 
@@ -114,16 +127,44 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
   void initState() {
     super.initState();
     _reproduccionAutomatica = widget.reproduccionAutomatica;
-    final indiceInicial = widget.indiceActual.clamp(
+    _listaVideos = List<ModeloVideo>.from(widget.listaVideos);
+    _criterioOrden =
+        widget.criterioOrden ?? ServicioPreferencias.criterioOrdenNotifier.value;
+    _indiceActual = widget.indiceActual.clamp(
       0,
-      widget.listaVideos.isEmpty ? 0 : widget.listaVideos.length - 1,
+      _listaVideos.isEmpty ? 0 : _listaVideos.length - 1,
     );
     _controladorScroll = ScrollController(
-      initialScrollOffset: indiceInicial > 1
-          ? (indiceInicial - 1) * _alturaEstimadaFila
+      initialScrollOffset: _indiceActual > 1
+          ? (_indiceActual - 1) * _alturaEstimadaFila
           : 0.0,
     );
     unawaited(_refrescarMetadatosYProgreso());
+  }
+
+  Future<void> _mostrarSelectorOrden() async {
+    final seleccionado = await ModalOrdenVideos.mostrar(
+      context,
+      criterioActual: _criterioOrden,
+      usarNavegadorRaiz: true,
+    );
+    if (seleccionado == null || !mounted) return;
+
+    final rutaActual =
+        (_indiceActual >= 0 && _indiceActual < _listaVideos.length)
+        ? _listaVideos[_indiceActual].ruta
+        : null;
+
+    OrdenadorVideos.ordenarVideos(_listaVideos, seleccionado);
+    final nuevoIndice = rutaActual == null
+        ? 0
+        : _listaVideos.indexWhere((v) => v.ruta == rutaActual);
+
+    setState(() {
+      _criterioOrden = seleccionado;
+      _indiceActual = nuevoIndice >= 0 ? nuevoIndice : 0;
+    });
+    widget.alCambiarCriterioOrden?.call(seleccionado);
   }
 
   Future<void> _refrescarMetadatosYProgreso() async {
@@ -132,17 +173,13 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
       if (!mounted) return;
 
       // Guardar el estado en vivo del video actual antes de enriquecer desde disco
-      final actual =
-          (widget.indiceActual >= 0 &&
-              widget.indiceActual < widget.listaVideos.length)
-          ? widget.listaVideos[widget.indiceActual]
+      final actual = (_indiceActual >= 0 && _indiceActual < _listaVideos.length)
+          ? _listaVideos[_indiceActual]
           : null;
       final posVivo = actual?.posicionGuardadaMs ?? 0;
       final durVivo = actual?.duracionTotalMs ?? 0;
 
-      await ServicioPreferencias.enriquecerVideosConProgreso(
-        widget.listaVideos,
-      );
+      await ServicioPreferencias.enriquecerVideosConProgreso(_listaVideos);
 
       if (actual != null) {
         if (durVivo > 0) actual.duracionTotalMs = durVivo;
@@ -155,7 +192,7 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
 
       final huboCambios =
           await ServicioAlmacenamientoVideo.completarDuracionesFaltantes(
-            widget.listaVideos,
+            _listaVideos,
           );
       if (huboCambios && mounted) {
         setState(() {});
@@ -179,7 +216,7 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
         : (tamano.width * 0.82).clamp(280.0, 360.0);
 
     final filtro = _filtroTexto.trim().toLowerCase();
-    final listaFiltrada = widget.listaVideos.where((v) {
+    final listaFiltrada = _listaVideos.where((v) {
       if (filtro.isEmpty) return true;
       return v.nombreSinExtension.toLowerCase().contains(filtro);
     }).toList();
@@ -218,7 +255,7 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
             child: Column(
               children: [
                 _EncabezadoHojaPlaylist(
-                  cantidadVideos: widget.listaVideos.length,
+                  cantidadVideos: _listaVideos.length,
                   reproduccionAutomatica: _reproduccionAutomatica,
                   alAlternarAuto: (val) {
                     setState(() => _reproduccionAutomatica = val);
@@ -231,13 +268,33 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
                   color: Colors.white.withValues(alpha: 0.12),
                 ),
 
-                // Buscador rápido si hay más de 5 videos
-                if (widget.listaVideos.length > 5)
+                // Buscador rápido y/o selector de ordenación de la lista
+                if (_listaVideos.length > 5)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                    child: _BuscadorHojaPlaylist(
-                      controlador: _controladorFiltro,
-                      alCambiar: (val) => setState(() => _filtroTexto = val),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _BuscadorHojaPlaylist(
+                            controlador: _controladorFiltro,
+                            alCambiar: (val) =>
+                                setState(() => _filtroTexto = val),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        _BotonOrdenHojaPlaylist(
+                          criterio: _criterioOrden,
+                          alPresionar: _mostrarSelectorOrden,
+                        ),
+                      ],
+                    ),
+                  )
+                else if (_listaVideos.length > 1)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
+                    child: _BarraOrdenCompactaPlaylist(
+                      criterio: _criterioOrden,
+                      alPresionar: _mostrarSelectorOrden,
                     ),
                   ),
 
@@ -263,10 +320,8 @@ class _HojaPlaylistReproductorState extends State<HojaPlaylistReproductor> {
                           itemCount: listaFiltrada.length,
                           itemBuilder: (context, index) {
                             final video = listaFiltrada[index];
-                            final indiceReal = widget.listaVideos.indexOf(
-                              video,
-                            );
-                            final esActual = indiceReal == widget.indiceActual;
+                            final indiceReal = _listaVideos.indexOf(video);
+                            final esActual = indiceReal == _indiceActual;
 
                             return RepaintBoundary(
                               key: ValueKey(video.ruta),
@@ -413,6 +468,95 @@ class _BuscadorHojaPlaylist extends StatelessWidget {
           ),
           border: InputBorder.none,
           contentPadding: EdgeInsets.symmetric(vertical: 8),
+        ),
+      ),
+    );
+  }
+}
+
+final class _BotonOrdenHojaPlaylist extends StatelessWidget {
+  final CriterioOrdenVideos criterio;
+  final VoidCallback alPresionar;
+
+  const _BotonOrdenHojaPlaylist({
+    required this.criterio,
+    required this.alPresionar,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Ordenar (${criterio.etiqueta})',
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: alPresionar,
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+            ),
+            child: const Icon(
+              Icons.sort_rounded,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+final class _BarraOrdenCompactaPlaylist extends StatelessWidget {
+  final CriterioOrdenVideos criterio;
+  final VoidCallback alPresionar;
+
+  const _BarraOrdenCompactaPlaylist({
+    required this.criterio,
+    required this.alPresionar,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: AlignmentDirectional.centerEnd,
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: alPresionar,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.sort_rounded,
+                  color: ColoresApp.textoSecundario,
+                  size: 14,
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  criterio.etiqueta,
+                  style: const TextStyle(
+                    color: ColoresApp.textoSecundario,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

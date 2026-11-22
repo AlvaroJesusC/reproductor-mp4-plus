@@ -2,20 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../../constantes/colores_app.dart';
+import '../../modelos/modelo_orden_videos.dart';
 import '../../modelos/modelo_video.dart';
 import '../../servicios/servicio_preferencias.dart';
+import '../../widgets/modal_orden_videos.dart';
 import '../../widgets/tarjeta_video.dart';
 import '../pantalla_reproductor.dart';
-
-enum CriterioOrden {
-  fechaReciente('Más recientes'),
-  fechaAntigua('Más antiguos'),
-  nombreAz('Nombre (A - Z)'),
-  tamanoMayor('Mayor tamaño');
-
-  final String etiqueta;
-  const CriterioOrden(this.etiqueta);
-}
 
 enum FiltroCategoria {
   todos('Todos', Icons.apps_rounded),
@@ -51,7 +43,8 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
   final TextEditingController _controladorBusqueda = TextEditingController();
   Timer? _temporizadorBusqueda;
   String _filtroTexto = '';
-  CriterioOrden _criterioOrden = CriterioOrden.fechaReciente;
+  CriterioOrdenVideos _criterioOrden =
+      ServicioPreferencias.criterioOrdenNotifier.value;
   FiltroCategoria _filtroCategoria = FiltroCategoria.todos;
   bool _modoCuadricula = false;
   late List<ModeloVideo> _videosVisibles;
@@ -60,6 +53,15 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
   void initState() {
     super.initState();
     _videosVisibles = _calcularVideosVisibles();
+    ServicioPreferencias.criterioOrdenNotifier.addListener(
+      _alCambiarCriterioGlobal,
+    );
+    ServicioPreferencias.obtenerCriterioOrdenVideos().then((criterio) {
+      if (mounted && criterio != _criterioOrden) {
+        _criterioOrden = criterio;
+        _actualizarVideosVisibles();
+      }
+    });
     ServicioPreferencias.obtenerModoVistaCuadricula().then((esCuadricula) {
       if (mounted) {
         setState(() {
@@ -67,6 +69,13 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
         });
       }
     });
+  }
+
+  void _alCambiarCriterioGlobal() {
+    final nuevo = ServicioPreferencias.criterioOrdenNotifier.value;
+    if (!mounted || nuevo == _criterioOrden) return;
+    _criterioOrden = nuevo;
+    _actualizarVideosVisibles();
   }
 
   @override
@@ -77,6 +86,9 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
 
   @override
   void dispose() {
+    ServicioPreferencias.criterioOrdenNotifier.removeListener(
+      _alCambiarCriterioGlobal,
+    );
     _temporizadorBusqueda?.cancel();
     _controladorBusqueda.dispose();
     super.dispose();
@@ -107,29 +119,7 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
           v.carpetaContenedora.toLowerCase().contains(filtroNormalizado);
     }).toList();
 
-    switch (_criterioOrden) {
-      case CriterioOrden.fechaReciente:
-        lista.sort(
-          (a, b) => b.fechaModificacion.compareTo(a.fechaModificacion),
-        );
-        break;
-      case CriterioOrden.fechaAntigua:
-        lista.sort(
-          (a, b) => a.fechaModificacion.compareTo(b.fechaModificacion),
-        );
-        break;
-      case CriterioOrden.nombreAz:
-        lista.sort(
-          (a, b) => a.nombreSinExtension.toLowerCase().compareTo(
-            b.nombreSinExtension.toLowerCase(),
-          ),
-        );
-        break;
-      case CriterioOrden.tamanoMayor:
-        lista.sort((a, b) => b.tamanoBytes.compareTo(a.tamanoBytes));
-        break;
-    }
-
+    OrdenadorVideos.ordenarVideos(lista, _criterioOrden);
     return lista;
   }
 
@@ -155,66 +145,18 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
     ServicioPreferencias.guardarModoVistaCuadricula(_modoCuadricula);
   }
 
-  void _mostrarModalOrden() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: ColoresApp.fondoSecundario,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        side: BorderSide(color: ColoresApp.bordeSutil, width: 1),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Ordenar videos por:',
-                style: TextStyle(
-                  color: ColoresApp.textoPrincipal,
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.1,
-                ),
-              ),
-              const SizedBox(height: 12),
-              ...CriterioOrden.values.map((criterio) {
-                final seleccionado = criterio == _criterioOrden;
-                return ListTile(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  title: Text(
-                    criterio.etiqueta,
-                    style: TextStyle(
-                      color: seleccionado
-                          ? ColoresApp.acentoPrimario
-                          : ColoresApp.textoPrincipal,
-                      fontWeight: seleccionado
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                    ),
-                  ),
-                  trailing: seleccionado
-                      ? const Icon(
-                          Icons.check_rounded,
-                          color: ColoresApp.acentoPrimario,
-                        )
-                      : null,
-                  onTap: () {
-                    _criterioOrden = criterio;
-                    _actualizarVideosVisibles();
-                    Navigator.of(ctx).pop();
-                  },
-                );
-              }),
-            ],
-          ),
-        );
-      },
+  Future<void> _mostrarModalOrden() async {
+    final seleccionado = await ModalOrdenVideos.mostrar(
+      context,
+      criterioActual: _criterioOrden,
     );
+    if (seleccionado != null && seleccionado != _criterioOrden) {
+      _criterioOrden = seleccionado;
+      if (mounted) {
+        _actualizarVideosVisibles();
+      }
+      await ServicioPreferencias.guardarCriterioOrdenVideos(seleccionado);
+    }
   }
 
   @override
@@ -421,6 +363,36 @@ class _PestanaTodosLosVideosState extends State<PestanaTodosLosVideos> {
                   ),
                 ),
               ],
+              const Spacer(),
+              InkWell(
+                borderRadius: BorderRadius.circular(6),
+                onTap: _mostrarModalOrden,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _criterioOrden.icono,
+                        size: 13,
+                        color: ColoresApp.textoSecundario,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _criterioOrden.etiqueta,
+                        style: const TextStyle(
+                          color: ColoresApp.textoSecundario,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),

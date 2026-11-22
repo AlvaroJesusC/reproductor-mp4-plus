@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../constantes/colores_app.dart';
 import '../modelos/modelo_carpeta_video.dart';
+import '../modelos/modelo_orden_videos.dart';
 import '../modelos/modelo_video.dart';
 import '../servicios/servicio_almacenamiento_video.dart';
 import '../servicios/servicio_permisos.dart';
 import '../servicios/servicio_preferencias.dart';
 import '../servicios/servicio_actualizador.dart';
 import '../widgets/dialogo_actualizacion.dart';
+import '../widgets/modal_orden_videos.dart';
 import '../modulos/pip/envoltorio_pip_scaffold.dart';
 import '../modulos/pip/gestor_pip_global.dart';
 import 'pantalla_reproductor.dart';
@@ -24,7 +26,8 @@ class PantallaPrincipal extends StatefulWidget {
   State<PantallaPrincipal> createState() => _PantallaPrincipalState();
 }
 
-class _PantallaPrincipalState extends State<PantallaPrincipal> {
+class _PantallaPrincipalState extends State<PantallaPrincipal>
+    with WidgetsBindingObserver {
   int _indicePestana = 1; // Iniciar por defecto en "Videos"
   bool _estaCargando = true;
   bool _estaActualizando = false;
@@ -47,6 +50,8 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    ServicioPreferencias.versionProgreso.addListener(_alCambiarProgresoGlobal);
     _verificarPermisosYRecargar();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _verificarActualizacionesSilencioso();
@@ -55,16 +60,47 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    ServicioPreferencias.versionProgreso.removeListener(
+      _alCambiarProgresoGlobal,
+    );
     _timerActualizacion?.cancel();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      final esRutaActual = ModalRoute.of(context)?.isCurrent ?? false;
+      if (esRutaActual) {
+        unawaited(_actualizarProgresoEnMemoria());
+      }
+    }
+  }
+
+  void _alCambiarProgresoGlobal() {
+    if (!mounted) return;
+    // Evitar rebuilds innecesarios en segundo plano mientras el reproductor
+    // a pantalla completa está encima (mantiene 144Hz limpios).
+    final esRutaActual = ModalRoute.of(context)?.isCurrent ?? false;
+    if (esRutaActual) {
+      unawaited(_actualizarProgresoEnMemoria());
+    }
+  }
+
   Future<void> _verificarPermisosYRecargar() async {
+    // 0. Restaurar el orden predeterminado antes de pintar las listas en caché
+    final criterioOrden = await ServicioPreferencias.obtenerCriterioOrdenVideos();
+
     // 1. Cargar caché instantáneo (< 50ms) para que la pantalla NUNCA se quede en blanco
     final videosEnCache = await ServicioPreferencias.obtenerCacheBiblioteca();
     if (videosEnCache.isNotEmpty && mounted) {
+      OrdenadorVideos.ordenarVideos(videosEnCache, criterioOrden);
       final carpetasEnCache =
-          ServicioAlmacenamientoVideo.agruparVideosPorCarpeta(videosEnCache);
+          ServicioAlmacenamientoVideo.agruparVideosPorCarpeta(
+            videosEnCache,
+            criterioOrden: criterioOrden,
+          );
       final recientesEnCache =
           await ServicioAlmacenamientoVideo.obtenerVideosContinuarViendo(
             videosEnCache,
@@ -145,6 +181,7 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   /// Actualización instantánea en memoria sin pantalla de carga (se usa al salir de un video o cambiar favoritos/completados).
   Future<void> _actualizarProgresoEnMemoria() async {
     try {
+      await ServicioPreferencias.esperarEscriturasPendientes();
       await ServicioPreferencias.enriquecerVideosConProgreso(_todosLosVideos);
       final recientes =
           await ServicioAlmacenamientoVideo.obtenerVideosContinuarViendo(
@@ -229,6 +266,19 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
 
     // Salir limpiamente si presionó 2 veces
     SystemNavigator.pop();
+  }
+
+  /// Permite establecer el filtro de ordenación predeterminado desde el menú superior.
+  Future<void> _elegirOrdenPredeterminado() async {
+    final criterioActual = ServicioPreferencias.criterioOrdenNotifier.value;
+    final seleccionado = await ModalOrdenVideos.mostrar(
+      context,
+      criterioActual: criterioActual,
+      titulo: 'Orden predeterminado',
+    );
+    if (seleccionado != null && seleccionado != criterioActual) {
+      await ServicioPreferencias.guardarCriterioOrdenVideos(seleccionado);
+    }
   }
 
   /// Comprobación silenciosa de actualizaciones al abrir la app.
@@ -478,11 +528,33 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
                   side: const BorderSide(color: ColoresApp.bordeSutil),
                 ),
                 onSelected: (valor) {
-                  if (valor == 'actualizar_app') {
+                  if (valor == 'orden_predeterminado') {
+                    _elegirOrdenPredeterminado();
+                  } else if (valor == 'actualizar_app') {
                     _buscarActualizacionesManual();
                   }
                 },
                 itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'orden_predeterminado',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.sort_rounded,
+                          color: ColoresApp.acentoPrimario,
+                          size: 20,
+                        ),
+                        SizedBox(width: 10),
+                        Text(
+                          'Orden predeterminado',
+                          style: TextStyle(
+                            color: ColoresApp.textoPrincipal,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   const PopupMenuItem(
                     value: 'actualizar_app',
                     child: Row(
@@ -579,6 +651,9 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
               setState(() {
                 _indicePestana = idx;
               });
+              if (idx == 0) {
+                unawaited(_actualizarProgresoEnMemoria());
+              }
             },
             destinations: [
               NavigationDestination(

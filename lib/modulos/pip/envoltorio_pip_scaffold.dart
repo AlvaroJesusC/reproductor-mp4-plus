@@ -20,7 +20,7 @@ class EnvoltorioPipScaffold extends StatefulWidget {
 }
 
 class _EnvoltorioPipScaffoldState extends State<EnvoltorioPipScaffold>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final AnimationController _controladorAnimacion;
   late final Animation<Offset> _animacionSlide;
   StreamSubscription<PiPStatus>? _subscripcionPip;
@@ -29,6 +29,7 @@ class _EnvoltorioPipScaffoldState extends State<EnvoltorioPipScaffold>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _controladorAnimacion = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 250),
@@ -56,12 +57,29 @@ class _EnvoltorioPipScaffoldState extends State<EnvoltorioPipScaffold>
       setState(() {
         _estaEnPip = enPip;
       });
-      if (!enPip && GestorPipGlobal.instancia.estaActivo) {
+      final esRutaActual = ModalRoute.of(context)?.isCurrent ?? false;
+      if (!enPip && GestorPipGlobal.instancia.estaActivo && esRutaActual) {
         // Al tocar el botón de expandir en la ventana PiP de Android, expandir de inmediato
-        // a pantalla completa para continuar disfrutando del video sin cortes
+        // a pantalla completa solo si el reproductor completo no está ya visible encima.
         unawaited(GestorPipGlobal.instancia.expandir(context));
       }
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      if (GestorPipGlobal.instancia.estaMinimizado ||
+          GestorPipGlobal.instancia.estadoPip.value ==
+              EstadoPip.pipNativoSistema) {
+        unawaited(
+          GestorPipGlobal.instancia.guardarProgresoActual().catchError((_) {}),
+        );
+      }
+    }
   }
 
   void _alCambiarEstadoPip() {
@@ -75,6 +93,7 @@ class _EnvoltorioPipScaffoldState extends State<EnvoltorioPipScaffold>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _subscripcionPip?.cancel();
     GestorPipGlobal.instancia.estadoPip.removeListener(_alCambiarEstadoPip);
     _controladorAnimacion.dispose();

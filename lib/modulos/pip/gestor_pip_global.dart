@@ -5,6 +5,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../modelos/modelo_video.dart';
 import '../../pantallas/pantalla_reproductor.dart';
+import '../../servicios/logica_reanudacion_video.dart';
 import '../../servicios/servicio_preferencias.dart';
 import 'servicio_pip_nativo.dart';
 
@@ -65,6 +66,9 @@ class GestorPipGlobal {
 
   StreamSubscription? _subscripcionPlaying;
   StreamSubscription? _subscripcionPosition;
+  int _ultimoGuardadoTimestamp = 0;
+  int _ultimaPosicionValidaMs = 0;
+  bool _estabaReproduciendoAnterior = false;
 
   bool get estaMinimizado => estadoPip.value == EstadoPip.minimizadoInApp;
   bool get estaActivo =>
@@ -85,6 +89,11 @@ class GestorPipGlobal {
     this.indiceActual = indiceActual;
     tituloVideo.value = video.nombreSinExtension;
     estadoPip.value = EstadoPip.reproductorCompleto;
+    _ultimoGuardadoTimestamp = DateTime.now().millisecondsSinceEpoch;
+    _ultimaPosicionValidaMs = reproductor.state.position.inMilliseconds > 0
+        ? reproductor.state.position.inMilliseconds
+        : video.posicionGuardadaMs;
+    _estabaReproduciendoAnterior = reproductor.state.playing;
 
     _subscripcionPlaying?.cancel();
     estaReproduciendo.value = reproductor.state.playing;
@@ -99,6 +108,13 @@ class GestorPipGlobal {
           alto: h,
         ),
       );
+      if (_estabaReproduciendoAnterior &&
+          !reproduciendo &&
+          (estadoPip.value == EstadoPip.minimizadoInApp ||
+              estadoPip.value == EstadoPip.pipNativoSistema)) {
+        unawaited(guardarProgresoActual().catchError((_) {}));
+      }
+      _estabaReproduciendoAnterior = reproduciendo;
     });
     final w = reproductor.state.width ?? 16;
     final h = reproductor.state.height ?? 9;
@@ -112,9 +128,30 @@ class GestorPipGlobal {
 
     _subscripcionPosition?.cancel();
     _subscripcionPosition = reproductor.stream.position.listen((pos) {
-      final durMs = reproductor.state.duration.inMilliseconds;
+      final posMs = pos.inMilliseconds;
+      final durMotorMs = reproductor.state.duration.inMilliseconds;
+      final videoRef = videoActual;
+      final durMs = durMotorMs > 0
+          ? durMotorMs
+          : (videoRef?.duracionTotalMs ?? 0);
+
+      if (posMs > 0) {
+        _ultimaPosicionValidaMs = posMs;
+      }
       if (durMs > 0) {
-        ratioProgreso.value = (pos.inMilliseconds / durMs).clamp(0.0, 1.0);
+        ratioProgreso.value = (posMs / durMs).clamp(0.0, 1.0);
+      }
+
+      // Mientras se reproduce en mini-reproductor o PiP nativo, persistir
+      // progreso cada 5s para que un cierre abrupto o cambio de app no lo pierda.
+      if (videoRef != null &&
+          (estadoPip.value == EstadoPip.minimizadoInApp ||
+              estadoPip.value == EstadoPip.pipNativoSistema)) {
+        final ahora = DateTime.now().millisecondsSinceEpoch;
+        if (ahora - _ultimoGuardadoTimestamp >= 5000) {
+          _ultimoGuardadoTimestamp = ahora;
+          unawaited(guardarProgresoActual().catchError((_) {}));
+        }
       }
     });
   }
@@ -124,6 +161,8 @@ class GestorPipGlobal {
     videoActual = video;
     indiceActual = indice;
     tituloVideo.value = video.nombreSinExtension;
+    _ultimaPosicionValidaMs = video.posicionGuardadaMs;
+    _ultimoGuardadoTimestamp = DateTime.now().millisecondsSinceEpoch;
   }
 
   /// Contrae el reproductor a la mini-ventana acoplada in-app estilo YouTube.
@@ -154,38 +193,80 @@ class GestorPipGlobal {
       reproductorExistente: reproductor,
       controladorExistente: controladorVideo,
     );
+    ServicioPreferencias.notificarCambioProgreso();
   }
 
   /// Alterna entre reproducir y pausar en el mini-reproductor.
   void alternarPlayPause() {
-    reproductor?.playOrPause();
+    final rep = reproductor;
+    if (rep == null) return;
+    final estabaReproduciendo = rep.state.playing;
+    unawaited(rep.playOrPause());
+    if (estabaReproduciendo) {
+      unawaited(guardarProgresoActual().catchError((_) {}));
+    }
+  }
+
+  /// Persiste la posición actual del video en PiP/mini-reproductor capturando
+  /// los valores de forma sincrónica antes de cualquier operación asíncrona.
+  Future<void> guardarProgresoActual() {
+    final video = videoActual;
+    final rep = reproductor;
+    if (video == null || rep == null) {
+      return Future<void>.value();
+    }
+
+    final posMs = LogicaReanudacionVideo.resolverPosicionParaGuardar(
+      posicionMotorMs: rep.state.position.inMilliseconds,
+      ultimaPosicionValidaMs: _ultimaPosicionValidaMs,
+    );
+    final durMotorMs = rep.state.duration.inMilliseconds;
+    final durMs = durMotorMs > 0 ? durMotorMs : video.duracionTotalMs;
+    final esCompletado = video.estaCompletado ||
+        rep.state.completed ||
+        LogicaReanudacionVideo.esVideoCompletado(
+          posicionMs: posMs,
+          duracionMs: durMs,
+        );
+
+    Future<void> operacion;
+    if (esCompletado) {
+      video.estaCompletado = true;
+      video.posicionGuardadaMs = 0;
+      if (durMs > 0) video.duracionTotalMs = durMs;
+      operacion = ServicioPreferencias.marcarVideoCompletado(
+        video.ruta,
+        duracionTotalMs: durMs,
+        completado: true,
+      );
+    } else if (posMs > LogicaReanudacionVideo.umbralMinimoProgresoMs) {
+      video.estaCompletado = false;
+      video.posicionGuardadaMs = posMs;
+      if (durMs > 0) video.duracionTotalMs = durMs;
+      operacion = ServicioPreferencias.guardarProgresoVideo(
+        rutaVideo: video.ruta,
+        posicionMs: posMs,
+        duracionTotalMs: durMs,
+      );
+    } else if (durMs > 0) {
+      video.duracionTotalMs = durMs;
+      operacion = ServicioPreferencias.guardarDuracionVideo(video.ruta, durMs);
+    } else {
+      return Future<void>.value();
+    }
+
+    PantallaReproductor.ultimoGuardadoFuture = operacion;
+    return operacion;
   }
 
   /// Cierra el mini-reproductor, persiste la última posición vista y libera la memoria.
-  Future<void> cerrar({bool guardarProgreso = true}) async {
-    if (videoActual != null && reproductor != null && guardarProgreso) {
-      final posMs = reproductor!.state.position.inMilliseconds;
-      final durMs = reproductor!.state.duration.inMilliseconds;
-      final esCompletado = videoActual!.estaCompletado ||
-          reproductor!.state.completed ||
-          (durMs > 0 && (posMs >= durMs * 0.95 || durMs - posMs <= 4000));
-      if (esCompletado) {
-        unawaited(
-          ServicioPreferencias.marcarVideoCompletado(
-            videoActual!.ruta,
-            duracionTotalMs: durMs,
-            completado: true,
-          ),
-        );
-      } else if (durMs > 0 && posMs > 5000) {
-        unawaited(
-          ServicioPreferencias.guardarProgresoVideo(
-            rutaVideo: videoActual!.ruta,
-            posicionMs: posMs,
-            duracionTotalMs: durMs,
-          ),
-        );
-      }
+  Future<void> cerrar({
+    bool guardarProgreso = true,
+    bool disponerReproductor = true,
+  }) async {
+    Future<void>? futuroGuardado;
+    if (guardarProgreso && videoActual != null && reproductor != null) {
+      futuroGuardado = guardarProgresoActual();
     }
 
     _subscripcionPlaying?.cancel();
@@ -194,16 +275,24 @@ class GestorPipGlobal {
     _subscripcionPosition = null;
     unawaited(ServicioPipNativo.configurarAutoPip(false));
 
-    final playerADispose = reproductor;
+    final playerADispose = disponerReproductor ? reproductor : null;
     reproductor = null;
     controladorVideo = null;
     videoActual = null;
     playlist = null;
     indiceActual = 0;
+    _ultimaPosicionValidaMs = 0;
+    _estabaReproduciendoAnterior = false;
     tituloVideo.value = '';
     estaReproduciendo.value = false;
     ratioProgreso.value = 0.0;
     estadoPip.value = EstadoPip.cerrado;
+
+    if (futuroGuardado != null) {
+      try {
+        await futuroGuardado;
+      } catch (_) {}
+    }
 
     try {
       await playerADispose?.dispose();

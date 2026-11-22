@@ -2,8 +2,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../constantes/colores_app.dart';
 import '../../modelos/modelo_carpeta_video.dart';
+import '../../modelos/modelo_orden_videos.dart';
 import '../../servicios/servicio_almacenamiento_video.dart';
 import '../../servicios/servicio_preferencias.dart';
+import '../../widgets/modal_orden_videos.dart';
 import '../../widgets/tarjeta_carpeta.dart';
 import '../../widgets/tarjeta_video.dart';
 import '../pantalla_reproductor.dart';
@@ -34,19 +36,78 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
   bool _estaCargandoDirectorio = false;
   bool _modoTodasLasCarpetas = false;
   bool _mostrarCarpetasOcultas = false;
+  CriterioOrdenVideos _criterioOrden =
+      ServicioPreferencias.criterioOrdenNotifier.value;
 
   final ScrollController _scrollControllerMigas = ScrollController();
 
   @override
   void initState() {
     super.initState();
+    ServicioPreferencias.criterioOrdenNotifier.addListener(
+      _alCambiarCriterioGlobal,
+    );
     _cargarRutaConfigurada();
   }
 
   @override
   void dispose() {
+    ServicioPreferencias.criterioOrdenNotifier.removeListener(
+      _alCambiarCriterioGlobal,
+    );
     _scrollControllerMigas.dispose();
     super.dispose();
+  }
+
+  void _alCambiarCriterioGlobal() {
+    final nuevo = ServicioPreferencias.criterioOrdenNotifier.value;
+    if (!mounted || nuevo == _criterioOrden) return;
+    _criterioOrden = nuevo;
+    _reordenarResultadoActualEnMemoria();
+  }
+
+  void _reordenarResultadoActualEnMemoria() {
+    final actual = _resultadoActual;
+    if (actual == null) {
+      if (mounted) setState(() {});
+      return;
+    }
+
+    final subcarpetasOrdenadas = List<ModeloCarpetaVideo>.from(
+      actual.subcarpetas,
+    );
+    OrdenadorVideos.ordenarCarpetas(
+      subcarpetasOrdenadas,
+      descendente: _criterioOrden == CriterioOrdenVideos.nombreDesc,
+    );
+    final videosOrdenados = OrdenadorVideos.videosOrdenados(
+      actual.videosDirectos,
+      _criterioOrden,
+    );
+
+    setState(() {
+      _resultadoActual = ResultadoExploracionDirectorio(
+        rutaActual: actual.rutaActual,
+        nombreActual: actual.nombreActual,
+        rutaPadre: actual.rutaPadre,
+        subcarpetas: subcarpetasOrdenadas,
+        videosDirectos: videosOrdenados,
+      );
+    });
+  }
+
+  Future<void> _mostrarModalOrden() async {
+    final seleccionado = await ModalOrdenVideos.mostrar(
+      context,
+      criterioActual: _criterioOrden,
+    );
+    if (seleccionado != null && seleccionado != _criterioOrden) {
+      _criterioOrden = seleccionado;
+      if (mounted) {
+        _reordenarResultadoActualEnMemoria();
+      }
+      await ServicioPreferencias.guardarCriterioOrdenVideos(seleccionado);
+    }
   }
 
   /// Carga la ruta configurada en caché o '/storage/emulated/0/Movies'.
@@ -87,10 +148,14 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
       _rutaActualExploracion = ruta;
     });
 
+    final criterio = await ServicioPreferencias.obtenerCriterioOrdenVideos();
+    _criterioOrden = criterio;
+
     final resultado =
         await ServicioAlmacenamientoVideo.explorarDirectorioJerarquico(
           ruta,
           mostrarOcultos: _mostrarCarpetasOcultas,
+          criterioOrden: criterio,
         );
 
     if (mounted) {
@@ -283,6 +348,18 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
             ),
           ),
 
+          // Botón rápido para elegir el criterio de ordenación (predeterminado: natural A-Z)
+          IconButton(
+            icon: const Icon(
+              Icons.sort_rounded,
+              color: ColoresApp.textoSecundario,
+              size: 20,
+            ),
+            tooltip: 'Ordenar (${_criterioOrden.etiqueta})',
+            visualDensity: VisualDensity.compact,
+            onPressed: _mostrarModalOrden,
+          ),
+
           // Botón directo para seleccionar carpeta raíz
           IconButton(
             icon: const Icon(
@@ -291,6 +368,7 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
               size: 20,
             ),
             tooltip: 'Elegir Carpeta Raíz',
+            visualDensity: VisualDensity.compact,
             onPressed: _elegirNuevaCarpetaRaiz,
           ),
 
@@ -523,6 +601,9 @@ class PestanaCarpetasState extends State<PestanaCarpetas> {
                         video,
                         listaReproduccion: videos,
                         indiceInicial: index,
+                      );
+                      await ServicioPreferencias.enriquecerVideosConProgreso(
+                        videos,
                       );
                       if (mounted) {
                         setState(() {});

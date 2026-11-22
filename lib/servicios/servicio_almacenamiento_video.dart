@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import '../modelos/modelo_carpeta_video.dart';
+import '../modelos/modelo_orden_videos.dart';
 import '../modelos/modelo_video.dart';
 import 'servicio_preferencias.dart';
 
@@ -110,6 +111,7 @@ class ServicioAlmacenamientoVideo {
   static Future<ResultadoExploracionDirectorio> explorarDirectorioJerarquico(
     String rutaDirectorio, {
     bool mostrarOcultos = false,
+    CriterioOrdenVideos? criterioOrden,
   }) async {
     final dir = Directory(rutaDirectorio);
     final nombreDir = rutaDirectorio.split(Platform.pathSeparator).last;
@@ -189,16 +191,17 @@ class ServicioAlmacenamientoVideo {
     } catch (_) {}
 
     final videosDirectos = await _crearModelosEnLotes(archivosVideoDirectos);
+    final criterio =
+        criterioOrden ?? await ServicioPreferencias.obtenerCriterioOrdenVideos();
 
-    // Ordenar subcarpetas alfabéticamente
-    subcarpetas.sort(
-      (a, b) => a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase()),
+    // Ordenar subcarpetas de forma natural (Temporada 1, Temporada 2, Temporada 10...)
+    OrdenadorVideos.ordenarCarpetas(
+      subcarpetas,
+      descendente: criterio == CriterioOrdenVideos.nombreDesc,
     );
 
-    // Ordenar videos por nombre
-    videosDirectos.sort(
-      (a, b) => a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase()),
-    );
+    // Ordenar videos según el criterio predeterminado (por defecto natural A-Z: E1, E2, E10...)
+    OrdenadorVideos.ordenarVideos(videosDirectos, criterio);
 
     // Cargar progreso de reproducción y favoritos de los videos directos
     await ServicioPreferencias.enriquecerVideosConProgreso(videosDirectos);
@@ -294,9 +297,8 @@ class ServicioAlmacenamientoVideo {
 
     final archivos = rutasVideos.map(File.new).toList(growable: false);
     final listaResultado = await _crearModelosEnLotes(archivos);
-    listaResultado.sort(
-      (a, b) => b.fechaModificacion.compareTo(a.fechaModificacion),
-    );
+    final criterio = await ServicioPreferencias.obtenerCriterioOrdenVideos();
+    OrdenadorVideos.ordenarVideos(listaResultado, criterio);
 
     await ServicioPreferencias.enriquecerVideosConProgreso(listaResultado);
     final favoritos = await ServicioPreferencias.obtenerFavoritos();
@@ -370,10 +372,14 @@ class ServicioAlmacenamientoVideo {
     return modelos;
   }
 
-  /// Agrupa videos por carpeta eficientemente.
+  /// Agrupa videos por carpeta eficientemente y ordena los videos de cada carpeta
+  /// con el criterio activo (por defecto orden natural A-Z).
   static List<ModeloCarpetaVideo> agruparVideosPorCarpeta(
-    List<ModeloVideo> videos,
-  ) {
+    List<ModeloVideo> videos, {
+    CriterioOrdenVideos? criterioOrden,
+  }) {
+    final criterio =
+        criterioOrden ?? ServicioPreferencias.criterioOrdenNotifier.value;
     final Map<String, List<ModeloVideo>> mapaCarpetas = {};
 
     for (final video in videos) {
@@ -387,6 +393,7 @@ class ServicioAlmacenamientoVideo {
 
     final List<ModeloCarpetaVideo> listaCarpetas = [];
     mapaCarpetas.forEach((ruta, listaVids) {
+      OrdenadorVideos.ordenarVideos(listaVids, criterio);
       final nombreCarpeta = ruta.split(Platform.pathSeparator).last;
       listaCarpetas.add(
         ModeloCarpetaVideo(
@@ -398,7 +405,11 @@ class ServicioAlmacenamientoVideo {
       );
     });
 
-    listaCarpetas.sort((a, b) => b.cantidadVideos.compareTo(a.cantidadVideos));
+    listaCarpetas.sort((a, b) {
+      final porCantidad = b.cantidadVideos.compareTo(a.cantidadVideos);
+      if (porCantidad != 0) return porCantidad;
+      return OrdenadorVideos.compararNatural(a.nombre, b.nombre);
+    });
     return listaCarpetas;
   }
 
@@ -422,6 +433,7 @@ class ServicioAlmacenamientoVideo {
   static Future<List<ModeloVideo>> obtenerVideosContinuarViendo(
     List<ModeloVideo> todosLosVideos,
   ) async {
+    await ServicioPreferencias.esperarEscriturasPendientes();
     final rutasHistorial = await ServicioPreferencias.obtenerHistorialRutas();
     final Map<String, ModeloVideo> mapaPorRuta = {
       for (final v in todosLosVideos) v.ruta: v,
@@ -429,7 +441,14 @@ class ServicioAlmacenamientoVideo {
 
     final List<ModeloVideo> resultado = [];
     for (final ruta in rutasHistorial) {
-      final video = mapaPorRuta[ruta];
+      ModeloVideo? video = mapaPorRuta[ruta];
+      if (video == null) {
+        final archivo = File(ruta);
+        if (await archivo.exists()) {
+          video = await ModeloVideo.desdeArchivoAsync(archivo);
+          await ServicioPreferencias.enriquecerVideosConProgreso([video]);
+        }
+      }
       if (video != null && video.tieneProgreso) {
         resultado.add(video);
       }
