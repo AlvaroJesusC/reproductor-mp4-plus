@@ -14,6 +14,7 @@ import '../constantes/colores_app.dart';
 import '../modelos/modelo_capitulo_video.dart';
 import '../modelos/modelo_opciones_reproduccion.dart';
 import '../modelos/modelo_orden_videos.dart';
+import '../modelos/modelo_pista_media.dart';
 import '../modelos/modelo_video.dart';
 import '../servicios/logica_reanudacion_video.dart';
 import '../servicios/servicio_almacenamiento_video.dart';
@@ -154,6 +155,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
   final ValueNotifier<CapituloSaltarActivo?> _capituloSaltarNotifier =
       ValueNotifier(null);
   bool _capitulosConsultadosTrasDuracion = false;
+  final ValueNotifier<EstadoPistasReproductor> _estadoPistasNotifier =
+      ValueNotifier(const EstadoPistasReproductor(cargando: true));
+  bool _pistasConsultadasTrasDuracion = false;
+  bool _consultandoPistas = false;
+  bool _consultaPistasPendiente = false;
+  Timer? _temporizadorReintentoPistas;
 
   /// Control reactivo de la opacidad del filtro de atenuación nocturna (sub-cero).
   final ValueNotifier<double> _opacidadFiltroNoche = ValueNotifier(0.0);
@@ -390,6 +397,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
           duracionInicialMs: _videoActual.duracionTotalMs,
         );
         unawaited(_cargarCapitulosDesdeMetadatos());
+        unawaited(_cargarPistasDesdeMotor());
         _reiniciarTemporizadorOcultarControles();
         return;
       }
@@ -399,21 +407,42 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       );
       _reproductorCreado = true;
 
-      try {
-        final dynamic platform = _reproductor.platform;
-        if (platform != null) {
-          // Aceleración directa por hardware en GPU (mediacodec en Android)
-          if (Platform.isAndroid) {
-            await platform.setProperty('hwdec', 'mediacodec');
-          } else {
-            await platform.setProperty('hwdec', 'auto-safe');
-          }
-          await platform.setProperty('hwdec-codecs', 'all');
-          await platform.setProperty('sub-auto', 'all');
-          await platform.setProperty('audio-file-auto', 'fuzzy');
-          await platform.setProperty('demuxer-mkv-subtitle-preroll', 'yes');
+      final dynamic platform = _reproductor.platform;
+      if (platform != null) {
+        // Aceleración directa por hardware en GPU (mediacodec en Android)
+        if (Platform.isAndroid) {
+          await _establecerPropiedadMpvSegura(platform, 'hwdec', 'mediacodec');
+        } else {
+          await _establecerPropiedadMpvSegura(platform, 'hwdec', 'auto-safe');
         }
-      } catch (_) {}
+        await _establecerPropiedadMpvSegura(platform, 'hwdec-codecs', 'all');
+        await _establecerPropiedadMpvSegura(platform, 'sub-auto', 'fuzzy');
+        await _establecerPropiedadMpvSegura(
+          platform,
+          'sub-file-paths',
+          'subs:Subs:subtitles:Subtitles',
+        );
+        await _establecerPropiedadMpvSegura(
+          platform,
+          'audio-file-auto',
+          'fuzzy',
+        );
+        await _establecerPropiedadMpvSegura(
+          platform,
+          'demuxer-mkv-subtitle-preroll',
+          'yes',
+        );
+        await _establecerPropiedadMpvSegura(
+          platform,
+          'demuxer-lavf-probesize',
+          '10000000',
+        );
+        await _establecerPropiedadMpvSegura(
+          platform,
+          'demuxer-lavf-analyzeduration',
+          '10',
+        );
+      }
 
       _controladorVideo = VideoController(
         _reproductor,
@@ -653,6 +682,26 @@ class _PantallaReproductorState extends State<PantallaReproductor>
             _capitulosConsultadosTrasDuracion = true;
             unawaited(_cargarCapitulosDesdeMetadatos());
           }
+          if (!_pistasConsultadasTrasDuracion) {
+            _pistasConsultadasTrasDuracion = true;
+            unawaited(_cargarPistasDesdeMotor());
+          }
+        }
+      }),
+    );
+
+    // 4.5 Escuchar cambios en la lista de pistas y pista seleccionada
+    _suscripciones.add(
+      _reproductor.stream.tracks.listen((_) {
+        if (mounted && !_estaSaliendo && idCargaSuscripcion == _idCargaVideo) {
+          unawaited(_cargarPistasDesdeMotor());
+        }
+      }),
+    );
+    _suscripciones.add(
+      _reproductor.stream.track.listen((_) {
+        if (mounted && !_estaSaliendo && idCargaSuscripcion == _idCargaVideo) {
+          unawaited(_cargarPistasDesdeMotor());
         }
       }),
     );
@@ -687,6 +736,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
                   )
                 : Media(_videoActual.ruta);
             await _reproductor.open(mediaFallback, play: true);
+            unawaited(_cargarPistasDesdeMotor());
             if (posPreservarMs >
                     LogicaReanudacionVideo.umbralMinimoProgresoMs &&
                 mounted &&
@@ -801,6 +851,19 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       // Configurar suscripciones reactivas del motor
       _configurarSuscripcionesMotor();
 
+      // Restablecer selección previa de pistas en libmpv para evitar que un
+      // `aid`/`sid` de otro video deje sin audio o sin subtítulos al nuevo archivo.
+      final dynamic platformReset = _reproductor.platform;
+      if (platformReset != null) {
+        await _establecerPropiedadMpvSegura(platformReset, 'aid', 'auto');
+        await _establecerPropiedadMpvSegura(platformReset, 'sid', 'auto');
+        await _establecerPropiedadMpvSegura(
+          platformReset,
+          'sub-visibility',
+          'no',
+        );
+      }
+
       // Abrir usando `Media.start` nativo de libmpv (hook on_load) para posicionar
       // el demuxer directamente en el minuto guardado sin carreras al iniciar.
       final media = objetivoInicialMs > 0
@@ -814,9 +877,11 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return;
 
       unawaited(_cargarCapitulosDesdeMetadatos());
+      unawaited(_cargarPistasDesdeMotor());
+      _programarReintentosDeteccionPistas(idCarga);
 
-      // Cargar subtítulos locales automáticamente si existen
-      unawaited(_buscarYCargarSubtitulosLocales());
+      // Cargar subtítulos locales compañeros sin sobrescribir pistas incrustadas
+      unawaited(_buscarYCargarSubtitulosLocales(idCarga));
 
       final objetivoReanudacionMs = await _aplicarReanudacionInicial(
         objetivoInicialMs,
@@ -1217,7 +1282,12 @@ class _PantallaReproductorState extends State<PantallaReproductor>
       _videoActual.estaCompletado = false;
       _videoActual.posicionGuardadaMs = 0;
       unawaited(
-        _reproductor.open(Media(_videoActual.ruta), play: true).catchError((_) {}),
+        _reproductor.open(Media(_videoActual.ruta), play: true).then((_) {
+          if (mounted && !_estaSaliendo) {
+            unawaited(_cargarPistasDesdeMotor());
+            _programarReintentosDeteccionPistas(_idCargaVideo);
+          }
+        }).catchError((_) {}),
       );
       _reiniciarTemporizadorOcultarControles();
       return;
@@ -1479,20 +1549,305 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     });
   }
 
-  /// Muestra el modal para cambiar de subtítulos y pistas de audio incrustadas.
+  Future<void> _establecerPropiedadMpvSegura(
+    dynamic platform,
+    String propiedad,
+    String valor,
+  ) async {
+    try {
+      await platform.setProperty(propiedad, valor);
+    } catch (_) {}
+  }
+
+  Future<String> _leerPropiedadMpvSegura(
+    dynamic platform,
+    String propiedad,
+  ) async {
+    try {
+      final dynamic valor = await platform.getProperty(propiedad);
+      return valor?.toString() ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Programa lecturas diferidas de `track-list` por si el demuxer tarda unos
+  /// milisegundos adicionales en descubrir todas las pistas de audio/subtítulos.
+  void _programarReintentosDeteccionPistas(int idCarga) {
+    _temporizadorReintentoPistas?.cancel();
+    _temporizadorReintentoPistas = Timer(
+      const Duration(milliseconds: 450),
+      () {
+        if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return;
+        unawaited(_cargarPistasDesdeMotor());
+        _temporizadorReintentoPistas = Timer(
+          const Duration(milliseconds: 1200),
+          () {
+            if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return;
+            unawaited(_cargarPistasDesdeMotor());
+          },
+        );
+      },
+    );
+  }
+
+  /// Lee de forma autoritativa las pistas de audio y subtítulos directamente
+  /// desde libmpv (`track-list` JSON + fallback indexado + `aid`/`sid`) para
+  /// evitar pérdidas tras `eof-reached`, cargas lentas o cambios de video.
+  Future<void> _cargarPistasDesdeMotor({
+    bool mostrarCarga = false,
+    bool forzarReescaneoLocal = false,
+  }) async {
+    if (!mounted || _estaSaliendo || !_reproductorCreado) return;
+
+    if (_consultandoPistas) {
+      _consultaPistasPendiente = true;
+      return;
+    }
+
+    _consultandoPistas = true;
+    final idCargaActual = _idCargaVideo;
+    final rutaObjetivo = _videoActual.ruta;
+
+    if (mostrarCarga) {
+      _estadoPistasNotifier.value = _estadoPistasNotifier.value.copiarCon(
+        cargando: true,
+      );
+    }
+
+    try {
+      if (forzarReescaneoLocal) {
+        await _buscarYCargarSubtitulosLocales(idCargaActual);
+        if (!mounted ||
+            _estaSaliendo ||
+            idCargaActual != _idCargaVideo ||
+            _videoActual.ruta != rutaObjetivo) {
+          return;
+        }
+      }
+
+      final dynamic platform = _reproductor.platform;
+      String rawTrackList = '';
+      String aidActual = '';
+      String sidActual = '';
+      List<Map<String, dynamic>>? pistasIndexadas;
+
+      if (platform != null) {
+        rawTrackList = await _leerPropiedadMpvSegura(platform, 'track-list');
+        aidActual = await _leerPropiedadMpvSegura(platform, 'aid');
+        sidActual = await _leerPropiedadMpvSegura(platform, 'sid');
+
+        final sondeoJson = EstadoPistasReproductor.construirDesdeMpv(
+          jsonTrackList: rawTrackList,
+        );
+        if (sondeoJson.pistasAudio.isEmpty &&
+            sondeoJson.pistasSubtitulos.isEmpty) {
+          final countStr = await _leerPropiedadMpvSegura(
+            platform,
+            'track-list/count',
+          );
+          final count = int.tryParse(countStr.trim()) ?? 0;
+          if (count > 0) {
+            final leidas = <Map<String, dynamic>>[];
+            for (int i = 0; i < count; i++) {
+              final tipo = (await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/type',
+              )).trim();
+              if (tipo != 'audio' && tipo != 'sub') continue;
+              final id = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/id',
+              );
+              final titulo = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/title',
+              );
+              final lang = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/lang',
+              );
+              final codec = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/codec',
+              );
+              final selected = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/selected',
+              );
+              final isDefault = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/default',
+              );
+              final forced = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/forced',
+              );
+              final external = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/external',
+              );
+              final externalFilename = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/external-filename',
+              );
+              final channels = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/demux-channels',
+              );
+              final channelCount = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/demux-channel-count',
+              );
+              final sampleRate = await _leerPropiedadMpvSegura(
+                platform,
+                'track-list/$i/demux-samplerate',
+              );
+              leidas.add({
+                'type': tipo,
+                'id': id,
+                'title': titulo,
+                'lang': lang,
+                'codec': codec,
+                'selected': selected,
+                'default': isDefault,
+                'forced': forced,
+                'external': external,
+                'external-filename': externalFilename,
+                'demux-channels': channels,
+                'demux-channel-count': channelCount,
+                'demux-samplerate': sampleRate,
+              });
+            }
+            pistasIndexadas = leidas;
+          }
+        }
+      }
+
+      if (!mounted ||
+          _estaSaliendo ||
+          idCargaActual != _idCargaVideo ||
+          _videoActual.ruta != rutaObjetivo) {
+        return;
+      }
+
+      final nuevoEstado = EstadoPistasReproductor.construirDesdeMpv(
+        jsonTrackList: rawTrackList,
+        pistasIndexadas: pistasIndexadas,
+        aidActual: aidActual,
+        sidActual: sidActual,
+        tracksFallback: _reproductor.state.tracks,
+        trackFallback: _reproductor.state.track,
+        cargando: false,
+      );
+      _estadoPistasNotifier.value = nuevoEstado;
+
+      // Habilitar renderizado nativo de libmpv únicamente cuando la pista activa
+      // de subtítulo sea basada en imágenes (PGS/VobSub/DVB), manteniendo
+      // `sub-visibility=no` para subtítulos de texto que dibuja Flutter SubtitleView.
+      if (platform != null) {
+        final subActiva = nuevoEstado.pistaSubtituloActiva;
+        final usarRenderNativoSub = subActiva?.esSubtituloImagen ?? false;
+        await _establecerPropiedadMpvSegura(
+          platform,
+          'sub-visibility',
+          usarRenderNativoSub ? 'yes' : 'no',
+        );
+      }
+    } catch (_) {
+      if (mounted && !_estaSaliendo && idCargaActual == _idCargaVideo) {
+        _estadoPistasNotifier.value = _estadoPistasNotifier.value.copiarCon(
+          cargando: false,
+        );
+      }
+    } finally {
+      _consultandoPistas = false;
+      if (_consultaPistasPendiente && mounted && !_estaSaliendo) {
+        _consultaPistasPendiente = false;
+        unawaited(_cargarPistasDesdeMotor());
+      }
+    }
+  }
+
+  /// Selecciona una pista de audio (o `null` para silenciar la pista de audio).
+  void _seleccionarPistaAudio(PistaMedia? pista) {
+    if (!_estaInicializado || _estaSaliendo) return;
+    final nuevoId = pista?.id ?? 'no';
+    _estadoPistasNotifier.value = _estadoPistasNotifier.value.copiarCon(
+      audioActivoId: nuevoId,
+    );
+    unawaited(_aplicarPistaAudio(pista));
+  }
+
+  Future<void> _aplicarPistaAudio(PistaMedia? pista) async {
+    try {
+      await _reproductor.setAudioTrack(
+        pista == null ? AudioTrack.no() : pista.aAudioTrack(),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+      if (mounted && !_estaSaliendo) {
+        unawaited(_cargarPistasDesdeMotor());
+      }
+    } catch (_) {}
+  }
+
+  /// Selecciona una pista de subtítulos (o `null` para desactivarlos).
+  void _seleccionarPistaSubtitulo(PistaMedia? pista) {
+    if (!_estaInicializado || _estaSaliendo) return;
+    final nuevoId = pista?.id ?? 'no';
+    _estadoPistasNotifier.value = _estadoPistasNotifier.value.copiarCon(
+      subtituloActivoId: nuevoId,
+    );
+    unawaited(_aplicarPistaSubtitulo(pista));
+  }
+
+  Future<void> _aplicarPistaSubtitulo(PistaMedia? pista) async {
+    try {
+      final dynamic platform = _reproductor.platform;
+      if (platform != null) {
+        final usarRenderNativo = pista?.esSubtituloImagen ?? false;
+        await _establecerPropiedadMpvSegura(
+          platform,
+          'sub-visibility',
+          usarRenderNativo ? 'yes' : 'no',
+        );
+      }
+      await _reproductor.setSubtitleTrack(
+        pista == null ? SubtitleTrack.no() : pista.aSubtitleTrack(),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+      if (mounted && !_estaSaliendo) {
+        unawaited(_cargarPistasDesdeMotor());
+      }
+    } catch (_) {}
+  }
+
+  /// Muestra el panel adaptativo de pistas de audio y subtítulos ocultando el
+  /// HUD central mientras está abierto para evitar superposición visual.
   void _mostrarModalPistas() {
     if (!_estaInicializado || _estaSaliendo) return;
-    showDialog(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.25),
-      builder: (_) => ModalPistasAudioSubtitulos(
-        pistas: _reproductor.state.tracks,
-        pistaAudioActual: _reproductor.state.track.audio,
-        pistaSubtituloActual: _reproductor.state.track.subtitle,
-        alSeleccionarAudio: (track) => _reproductor.setAudioTrack(track),
-        alSeleccionarSubtitulo: (track) => _reproductor.setSubtitleTrack(track),
+    unawaited(_cargarPistasDesdeMotor());
+
+    _temporizadorOcultarControles?.cancel();
+    if (_mostrarControles) {
+      setState(() {
+        _mostrarControles = false;
+      });
+      _sincronizarModoBarrasSistema();
+    }
+
+    unawaited(
+      ModalPistasAudioSubtitulos.mostrar(
+        context,
+        estadoPistasListenable: _estadoPistasNotifier,
+        alSeleccionarAudio: _seleccionarPistaAudio,
+        alSeleccionarSubtitulo: _seleccionarPistaSubtitulo,
         alCargarSubtituloExterno: _cargarSubtituloExterno,
         alAbrirSincronizacion: _mostrarModalSincronizacion,
+        alRecargarPistas: () => _cargarPistasDesdeMotor(
+          mostrarCarga: true,
+          forzarReescaneoLocal: true,
+        ),
       ),
     );
   }
@@ -1954,6 +2309,10 @@ class _PantallaReproductorState extends State<PantallaReproductor>
         final nombreSub = result.files.single.name;
         final track = SubtitleTrack.uri(rutaSub, title: nombreSub);
         await _reproductor.setSubtitleTrack(track);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        if (mounted && !_estaSaliendo) {
+          unawaited(_cargarPistasDesdeMotor());
+        }
 
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1976,18 +2335,80 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     }
   }
 
-  Future<void> _buscarYCargarSubtitulosLocales() async {
+  /// Descubre subtítulos locales compañeros que coincidan estrictamente con el
+  /// video actual y los añade a libmpv sin duplicar ni sobrescribir pistas incrustadas.
+  Future<void> _buscarYCargarSubtitulosLocales(int idCarga) async {
     try {
-      final subtitulos =
-          await ServicioAlmacenamientoVideo.buscarSubtitulosLocales(
-            _videoActual.ruta,
-          );
-      if (subtitulos.isNotEmpty) {
-        final primerSub = subtitulos.first;
-        final nombre = primerSub.path.split(Platform.pathSeparator).last;
-        await _reproductor.setSubtitleTrack(
-          SubtitleTrack.uri(primerSub.path, title: nombre),
-        );
+      await Future<void>.delayed(const Duration(milliseconds: 220));
+      if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return;
+
+      final rutaVideo = _videoActual.ruta;
+      final candidatos =
+          await ServicioAlmacenamientoVideo.buscarSubtitulosLocales(rutaVideo);
+      if (candidatos.isEmpty ||
+          !mounted ||
+          _estaSaliendo ||
+          idCarga != _idCargaVideo) {
+        return;
+      }
+
+      final nombreBaseVideo = rutaVideo.split(Platform.pathSeparator).last;
+      final puntoVideo = nombreBaseVideo.lastIndexOf('.');
+      final baseVideo = (puntoVideo != -1
+              ? nombreBaseVideo.substring(0, puntoVideo)
+              : nombreBaseVideo)
+          .toLowerCase();
+
+      // Filtrar coincidencias estrictas: el subtítulo debe empezar por el nombre
+      // exacto del video (ej. `Video.srt`, `Video.es.srt`, `Video_latino.ass`),
+      // evitando falsos positivos de otros episodios en la misma carpeta.
+      final coincidentes = candidatos.where((archivo) {
+        final nombreSub = archivo.path.split(Platform.pathSeparator).last;
+        final puntoSub = nombreSub.lastIndexOf('.');
+        final baseSub = (puntoSub != -1
+                ? nombreSub.substring(0, puntoSub)
+                : nombreSub)
+            .toLowerCase();
+        if (baseSub == baseVideo) return true;
+        if (!baseSub.startsWith(baseVideo)) return false;
+        final resto = baseSub.substring(baseVideo.length);
+        return resto.startsWith('.') ||
+            resto.startsWith('_') ||
+            resto.startsWith('-') ||
+            resto.startsWith(' ');
+      }).toList();
+
+      if (coincidentes.isEmpty) return;
+
+      // Evitar duplicar subtítulos que `sub-auto=fuzzy` ya cargó en libmpv.
+      final rutasYaCargadas = _estadoPistasNotifier.value.pistasSubtitulos
+          .map((p) => p.rutaExterna?.toLowerCase())
+          .whereType<String>()
+          .toSet();
+
+      final dynamic platform = _reproductor.platform;
+      if (platform == null) return;
+
+      bool seAnadioAlguno = false;
+      for (final archivo in coincidentes) {
+        if (!mounted || _estaSaliendo || idCarga != _idCargaVideo) return;
+        final rutaNormalizada = archivo.path.toLowerCase();
+        if (rutasYaCargadas.contains(rutaNormalizada)) continue;
+
+        final nombre = archivo.path.split(Platform.pathSeparator).last;
+        try {
+          // `auto` añade el subtítulo a la lista sin expulsar pistas incrustadas.
+          await platform.command(['sub-add', archivo.path, 'auto', nombre]);
+          rutasYaCargadas.add(rutaNormalizada);
+          seAnadioAlguno = true;
+        } catch (_) {}
+      }
+
+      if (seAnadioAlguno &&
+          mounted &&
+          !_estaSaliendo &&
+          idCarga == _idCargaVideo) {
+        unawaited(_cargarPistasDesdeMotor());
       }
     } catch (_) {}
   }
@@ -2197,6 +2618,9 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _capitulosConsultadosTrasDuracion = false;
     _capitulosNotifier.value = const [];
     _capituloSaltarNotifier.value = null;
+    _pistasConsultadasTrasDuracion = false;
+    _temporizadorReintentoPistas?.cancel();
+    _estadoPistasNotifier.value = const EstadoPistasReproductor(cargando: true);
     _controladorVistaPrevia.actualizarCapitulos(const []);
     setState(() {
       _videoActual = nuevoVideo;
@@ -2683,6 +3107,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _temporizadorOcultarBotonDesbloqueo?.cancel();
     _temporizadorApagadoTimer?.cancel();
     _temporizadorAutoplay?.cancel();
+    _temporizadorReintentoPistas?.cancel();
     if (_temporizadorGuardarVelocidad?.isActive ?? false) {
       _temporizadorGuardarVelocidad?.cancel();
       unawaited(
@@ -2708,6 +3133,7 @@ class _PantallaReproductorState extends State<PantallaReproductor>
     _versionOSD.dispose();
     _capitulosNotifier.dispose();
     _capituloSaltarNotifier.dispose();
+    _estadoPistasNotifier.dispose();
     _opacidadFiltroNoche.dispose();
     _controladorVistaPrevia.dispose();
 
